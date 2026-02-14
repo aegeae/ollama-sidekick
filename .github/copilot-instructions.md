@@ -107,15 +107,15 @@ This repo is a minimal **Chrome/Brave Manifest V3** extension that chats with a 
 
 - `main` is treated as a protected release branch.
 - Auto bump/tag workflow: `.github/workflows/auto-release.yml`
-  - Computes bump from Conventional Commits since last `v*` tag (see scripts below)
+  - Uses `semantic-release` to compute bump from Conventional Commits since last `v*` tag
   - Commits: `chore(release): vX.Y.Z [skip ci]`
   - Creates annotated tag `vX.Y.Z`
 
-- Version scripts:
-  - `scripts/next-version.mjs` — reads git tags + commit messages to compute bump/next version
-  - `scripts/apply-version.mjs` — writes version to `package.json` + `manifest.json` (+ `package-lock.json` if present)
+- Release notes + changelog:
+  - `semantic-release` updates `CHANGELOG.md` and creates the GitHub Release.
+  - `scripts/sync-manifest-version.mjs` keeps `manifest.json` version aligned with `package.json`.
 
-- Tag release workflow: `.github/workflows/release.yml` builds `ollama-sidekick.zip` and creates a GitHub Release on `v*` tags.
+- Manual fallback workflow: `.github/workflows/release.yml` can be run manually to build a zip for a given ref.
 - Details: `docs/RELEASING.md`
 
 ## Coding conventions (repo-specific)

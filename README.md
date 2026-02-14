@@ -58,6 +58,7 @@ For Chrome Web Store packaging:
 
 - The extension action popup is controlled by the browser UI, so it cannot be freely dragged to a different location.
 - Use **Pop out** to open a movable + resizable chat window.
+- **Pop in** closes the pop-out window. Reopen the toolbar popup by clicking the extension icon.
 
 ### Use current tab as context
 
@@ -68,6 +69,11 @@ In the popup:
 
 Context is only extracted on user action (when you send with **Context** enabled) and is not persisted.
 
+Notes / limitations:
+
+- Context extraction only works on normal webpages (`http(s)://`). It does not work on restricted pages like `chrome://`, `brave://`, the extensions gallery, etc.
+- In **Pop out** window mode, context targets the active tab in your focused normal browser window. Switch tabs in the browser, then send again to attach the new context.
+
 ### Chat history (local)
 
 - Conversations are saved locally in the browser via `chrome.storage.local`.
@@ -77,7 +83,7 @@ Context is only extracted on user action (when you send with **Context** enabled
 ### Context menu
 
 - Select text on a page → right click → **Ask Ollama about selection**
-- This opens an extension chat tab prefilled with the selection and auto-sends it.
+- This opens a movable extension chat window prefilled with the selection and auto-sends it.
 
 ## Dev loop
 

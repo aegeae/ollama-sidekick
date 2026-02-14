@@ -2,6 +2,11 @@ import { getSettings } from '../lib/settings';
 import { listModels, generate, HttpError } from '../lib/ollamaClient';
 import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
 
+const SESSION_LAST_USER_TAB_ID_KEY = 'lastUserTabId';
+const SESSION_LAST_NORMAL_WINDOW_ID_KEY = 'lastNormalWindowId';
+
+let lastFocusedNormalWindowId: number | null = null;
+
 let modelsCache:
   | {
       baseUrl: string;
@@ -47,12 +52,112 @@ async function getActiveTabId(): Promise<number> {
   return tab.id;
 }
 
+async function rememberLastUserTabId(tabId: number): Promise<void> {
+  try {
+    // We intentionally do not store URLs or page content; just the tab id pointer.
+    // Tab URL access can also be restricted without the `tabs` permission.
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.id) return;
+    await chrome.storage.session.set({ [SESSION_LAST_USER_TAB_ID_KEY]: tab.id });
+  } catch {
+    // Best-effort only.
+  }
+}
+
+async function rememberLastNormalWindowId(windowId: number): Promise<void> {
+  if (!Number.isFinite(windowId)) return;
+  lastFocusedNormalWindowId = windowId;
+  try {
+    await chrome.storage.session.set({ [SESSION_LAST_NORMAL_WINDOW_ID_KEY]: windowId });
+  } catch {
+    // Best-effort only.
+  }
+}
+
+async function getRememberedLastUserTabId(): Promise<number | null> {
+  try {
+    const data = await chrome.storage.session.get([SESSION_LAST_USER_TAB_ID_KEY]);
+    const tabId = data?.[SESSION_LAST_USER_TAB_ID_KEY];
+    if (typeof tabId !== 'number' || !Number.isFinite(tabId)) return null;
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.id) return null;
+    return tab.id;
+  } catch {
+    return null;
+  }
+}
+
+async function getRememberedLastNormalWindowId(): Promise<number | null> {
+  if (typeof lastFocusedNormalWindowId === 'number' && Number.isFinite(lastFocusedNormalWindowId)) {
+    return lastFocusedNormalWindowId;
+  }
+  try {
+    const data = await chrome.storage.session.get([SESSION_LAST_NORMAL_WINDOW_ID_KEY]);
+    const windowId = data?.[SESSION_LAST_NORMAL_WINDOW_ID_KEY];
+    if (typeof windowId !== 'number' || !Number.isFinite(windowId)) return null;
+    return windowId;
+  } catch {
+    return null;
+  }
+}
+
+async function getActiveTabIdInNormalWindow(windowId: number): Promise<number | null> {
+  try {
+    const win = await chrome.windows.get(windowId);
+    if (!win || win.type !== 'normal') return null;
+    const [tab] = await chrome.tabs.query({ active: true, windowId });
+    if (!tab?.id) return null;
+    return tab.id;
+  } catch {
+    return null;
+  }
+}
+
+async function getContextTabId(explicitTabId?: number): Promise<number> {
+  if (typeof explicitTabId === 'number' && Number.isFinite(explicitTabId)) {
+    const tab = await chrome.tabs.get(explicitTabId);
+    if (!tab?.id) throw new Error('No tab found for provided tabId');
+    return tab.id;
+  }
+
+  // Prefer the active tab in the last-focused *normal* browser window.
+  const rememberedWinId = await getRememberedLastNormalWindowId();
+  if (rememberedWinId != null) {
+    const tabId = await getActiveTabIdInNormalWindow(rememberedWinId);
+    if (tabId != null) {
+      void rememberLastUserTabId(tabId);
+      return tabId;
+    }
+  }
+
+  // Fallback: ask Chrome which normal window was last focused.
+  try {
+    const normalWin = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+    if (normalWin?.id != null) {
+      void rememberLastNormalWindowId(normalWin.id);
+      const tabId = await getActiveTabIdInNormalWindow(normalWin.id);
+      if (tabId != null) {
+        void rememberLastUserTabId(tabId);
+        return tabId;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Last-resort fallback: a previously seen tab id.
+  const rememberedTab = await getRememberedLastUserTabId();
+  if (rememberedTab != null) return rememberedTab;
+
+  return getActiveTabId();
+}
+
 function normalizeWhitespace(text: string) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-async function getTabContext(maxChars = 8000) {
-  const tabId = await getActiveTabId();
+async function getTabContext(maxChars = 8000, explicitTabId?: number) {
+  const tabId = await getContextTabId(explicitTabId);
 
   try {
     // Inject our content script on-demand (requires activeTab + scripting).
@@ -90,15 +195,18 @@ async function getTabContext(maxChars = 8000) {
   };
 }
 
-function buildChatUrl(prefillPrompt: string) {
+function buildChatUrl(prefillPrompt: string, tabId?: number) {
   const url = new URL(chrome.runtime.getURL('src/popup/popup.html'));
   url.searchParams.set('mode', 'window');
   url.searchParams.set('prompt', prefillPrompt);
   url.searchParams.set('auto', '1');
+  if (typeof tabId === 'number' && Number.isFinite(tabId)) {
+    url.searchParams.set('tabId', String(Math.floor(tabId)));
+  }
   return url.toString();
 }
 
-async function openChatWindow(prefillPrompt: string) {
+async function openChatWindow(prefillPrompt: string, tabId?: number) {
   const data = await chrome.storage.local.get(['chatWinLeft', 'chatWinTop', 'chatWinWidth', 'chatWinHeight']);
   const left = typeof data.chatWinLeft === 'number' ? Math.round(data.chatWinLeft) : 80;
   const top = typeof data.chatWinTop === 'number' ? Math.round(data.chatWinTop) : 80;
@@ -106,7 +214,7 @@ async function openChatWindow(prefillPrompt: string) {
   const height = typeof data.chatWinHeight === 'number' ? Math.round(data.chatWinHeight) : 720;
 
   await chrome.windows.create({
-    url: buildChatUrl(prefillPrompt),
+    url: buildChatUrl(prefillPrompt, tabId),
     type: 'popup',
     left,
     top,
@@ -124,11 +232,46 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info) => {
+chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== 'ask-ollama-selection') return;
   const selection = (info.selectionText ?? '').trim();
   if (!selection) return;
-  void openChatWindow(selection);
+  const tabId = tab?.id;
+  if (typeof tabId === 'number') {
+    void rememberLastUserTabId(tabId);
+    if (typeof tab?.windowId === 'number') {
+      void rememberLastNormalWindowId(tab.windowId);
+    }
+  }
+  void openChatWindow(selection, typeof tabId === 'number' ? tabId : undefined);
+});
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  void (async () => {
+    try {
+      const win = await chrome.windows.get(activeInfo.windowId);
+      if (win?.type !== 'normal') return;
+      await rememberLastNormalWindowId(activeInfo.windowId);
+      await rememberLastUserTabId(activeInfo.tabId);
+    } catch {
+      // ignore
+    }
+  })();
+});
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  void (async () => {
+    try {
+      const win = await chrome.windows.get(windowId);
+      if (win?.type !== 'normal') return;
+      await rememberLastNormalWindowId(windowId);
+      const [tab] = await chrome.tabs.query({ active: true, windowId });
+      if (tab?.id) await rememberLastUserTabId(tab.id);
+    } catch {
+      // ignore
+    }
+  })();
 });
 
 chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendResponse) => {
@@ -209,7 +352,9 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
       if (message?.type === 'TAB_CONTEXT_GET') {
         const rawMax = typeof message.maxChars === 'number' && Number.isFinite(message.maxChars) ? message.maxChars : 8000;
         const maxChars = Math.max(500, Math.min(20_000, Math.floor(rawMax)));
-        const context = await getTabContext(maxChars);
+        const rawTabId = typeof message.tabId === 'number' && Number.isFinite(message.tabId) ? message.tabId : undefined;
+        const tabId = typeof rawTabId === 'number' ? Math.floor(rawTabId) : undefined;
+        const context = await getTabContext(maxChars, tabId);
         const resp: BackgroundResponse = { ok: true, type: 'TAB_CONTEXT_GET_RESULT', context };
         sendResponse(resp);
         return;

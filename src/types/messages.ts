@@ -1,7 +1,7 @@
 export type BackgroundRequest =
   | { type: 'OLLAMA_LIST_MODELS' }
   | { type: 'OLLAMA_GENERATE'; prompt: string; model?: string }
-  | { type: 'TAB_CONTEXT_GET'; maxChars?: number };
+  | { type: 'TAB_CONTEXT_GET'; maxChars?: number; tabId?: number };
 
 export type TabContext = {
   title: string;

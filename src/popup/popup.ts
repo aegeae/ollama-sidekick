@@ -63,6 +63,22 @@ function getQueryStateFromUrl(): { chatId: string | null; prompt: string; auto: 
   return { chatId: chatId && chatId.trim() ? chatId : null, prompt, auto };
 }
 
+function getTabIdFromUrl(): number | null {
+  const url = new URL(location.href);
+  const raw = url.searchParams.get('tabId');
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  const tabId = Math.floor(n);
+  return tabId > 0 ? tabId : null;
+}
+
+function getContextTargetTabId(): number | null {
+  // Only use an explicit override when provided (e.g. opened from context menu).
+  // Otherwise, let the background resolve the currently active browser tab each time.
+  return getTabIdFromUrl();
+}
+
 async function getSavedSidebarPrefs(): Promise<{ width: number; collapsed: boolean }> {
   const data = await chrome.storage.local.get(['sidebarWidth', 'sidebarCollapsed']);
   const widthRaw = typeof data.sidebarWidth === 'number' ? data.sidebarWidth : SIDEBAR_WIDTH_DEFAULT;
@@ -157,6 +173,18 @@ function formatError(resp: Extract<BackgroundResponse, { ok: false }>): string {
   if (resp.error.hint) parts.push(`Hint: ${resp.error.hint}`);
   return parts.join('\n');
 }
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object' && err != null && 'message' in err) {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === 'string') return msg;
+  }
+  return String(err);
+}
+
+// Note: tab targeting is handled in the background so pop-out remains browser-aware.
 
 type ChatRole = 'user' | 'assistant' | 'system' | 'error';
 type ChatMessage = {
@@ -736,6 +764,8 @@ async function openPopoutWindow() {
   url.searchParams.set('mode', 'window');
   const activeChatId = getActiveChatId();
   if (activeChatId) url.searchParams.set('chatId', activeChatId);
+  const tabId = getContextTargetTabId();
+  if (typeof tabId === 'number') url.searchParams.set('tabId', String(tabId));
 
   await chrome.windows.create({
     url: url.toString(),
@@ -995,7 +1025,7 @@ function setupSettingsModal(onSaved: () => void) {
         close();
       })
       .catch((e) => {
-        setStatus(String((e as any)?.message ?? e));
+        setStatus(errorMessage(e));
       })
       .finally(() => {
         saveBtn.disabled = false;
@@ -1021,7 +1051,7 @@ function setupSettingsModal(onSaved: () => void) {
         sizeEl.value = String(s.fontSize);
         setStatus('Reset.');
       })
-      .catch((e) => setStatus(String((e as any)?.message ?? e)))
+      .catch((e) => setStatus(errorMessage(e)))
       .finally(() => {
         resetBtn.disabled = false;
       });
@@ -1043,7 +1073,8 @@ function setContextBadge(text: string, visible: boolean) {
 }
 
 async function getTabContext(maxChars = 8000): Promise<TabContext> {
-  const resp = await sendMessage({ type: 'TAB_CONTEXT_GET', maxChars });
+  const tabId = getContextTargetTabId();
+  const resp = await sendMessage({ type: 'TAB_CONTEXT_GET', maxChars, tabId: tabId ?? undefined });
   if (!resp.ok) throw new Error(formatError(resp));
   if (resp.type !== 'TAB_CONTEXT_GET_RESULT') throw new Error('Unexpected response while reading tab context');
   return resp.context;
@@ -1056,7 +1087,7 @@ function buildContextBlock(ctx: TabContext): string {
   const clipped = body.length > 2000 ? body.slice(0, 2000) + '…' : body;
 
   return [
-    'Context (current tab):',
+    'Context (active tab):',
     `Title: ${ctx.title}`,
     `URL: ${ctx.url}`,
     '',
@@ -1158,7 +1189,7 @@ async function onGenerate() {
         }, 1500);
       } catch (e) {
         // Context is optional; show a system message and continue without it.
-        const text = `Context not attached: ${String((e as any)?.message ?? e)}`;
+        const text = `Context not attached: ${errorMessage(e)}`;
         const id = uid();
         chatStoreState = await appendMessage(activeChatId, { role: 'system', text, ts: Date.now(), id });
         addMessageWithId('system', text, id);
@@ -1197,7 +1228,7 @@ async function onGenerate() {
     renderSidebar();
   } catch (e) {
     removeMessage(thinkingId);
-    const text = String((e as any)?.message ?? e);
+    const text = errorMessage(e);
     const id = uid();
     chatStoreState = await appendMessage(activeChatId, { role: 'error', text, ts: Date.now(), model, id });
     addMessageWithId('error', text, id);
@@ -1245,7 +1276,12 @@ async function main() {
   if (popinBtn) {
     popinBtn.addEventListener('click', () => {
       void (async () => {
-        await openCompactWindow();
+        // MV3 cannot programmatically open the toolbar action popup.
+        // Pop-in closes this pop-out window; user reopens via the extension icon.
+        if (mode === 'window') {
+          setContextBadge('Pop-in: click the extension icon to reopen popup', true);
+          await new Promise((r) => setTimeout(r, 450));
+        }
         window.close();
       })();
     });
@@ -1293,7 +1329,7 @@ async function main() {
   try {
     await loadModels();
   } catch (e) {
-    addMessage('error', `Failed to load models. Is Ollama running?\n${String((e as any)?.message ?? e)}`);
+    addMessage('error', `Failed to load models. Is Ollama running?\n${errorMessage(e)}`);
   }
 
   // URL param support (used by context-menu open and window-mode deep links)
@@ -1638,5 +1674,5 @@ async function main() {
 }
 
 main().catch((e) => {
-  addMessage('error', String((e as any)?.message ?? e));
+  addMessage('error', errorMessage(e));
 });

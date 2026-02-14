@@ -31,6 +31,14 @@ jobs:
       - name: Build + zip
         run: npm run package:zip
 
+      - name: Upload installable zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-sidekick-${{ github.ref_name }}
+          path: ollama-sidekick.zip
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

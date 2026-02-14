@@ -122,6 +122,27 @@ jobs:
           git push origin HEAD:main
           git push origin "${{ steps.next.outputs.tag }}"
 
+      - name: Build + zip (artifact)
+        if: |
+          (
+            (steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true') ||
+            (steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true')
+          )
+        run: npm run package:zip
+
+      - name: Upload installable zip artifact
+        if: |
+          (
+            (steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true') ||
+            (steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true')
+          )
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-sidekick-${{ steps.next.outputs.tag }}
+          path: ollama-sidekick.zip
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Summary
         if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
         run: |

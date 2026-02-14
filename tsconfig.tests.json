@@ -16,6 +16,8 @@
     "src/lib/restrictedUrl.ts",
     "src/lib/settingsSchema.ts",
     "src/lib/promptWithContext.ts",
+    "src/lib/contextPreviewCacheKey.ts",
+    "src/lib/ollamaModelInfo.ts",
     "src/lib/tabTitleToChatTitle.ts",
     "src/lib/sessionTabChatMap.ts"
   ]

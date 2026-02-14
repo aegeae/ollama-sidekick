@@ -16,7 +16,7 @@
     "release:minor": "node scripts/bump-version.mjs minor && npm run build",
     "release:major": "node scripts/bump-version.mjs major && npm run build",
     "package:zip": "npm run build && rimraf ollama-sidekick.zip && cd dist && zip -r ../ollama-sidekick.zip . -x '*.map' -x '**/.DS_Store'",
-    "test": "tsc -p tsconfig.tests.json && node --test .test-dist/tests/*.test.js",
+    "test": "rimraf .test-dist && tsc -p tsconfig.tests.json && node --test .test-dist/tests/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

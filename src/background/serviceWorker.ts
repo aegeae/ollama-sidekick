@@ -1,5 +1,6 @@
 import { getSettings } from '../lib/settings';
-import { listModels, generate, HttpError } from '../lib/ollamaClient';
+import { listModels, generate, showModel, HttpError } from '../lib/ollamaClient';
+import { extractTokenBudget } from '../lib/ollamaModelInfo';
 import { getRestrictedPageHint, isRestrictedUrl } from '../lib/restrictedUrl';
 import type { BackgroundRequest, BackgroundResponse, TabInfo } from '../types/messages';
 
@@ -189,8 +190,19 @@ async function getTabInfo(explicitTabId?: number): Promise<TabInfo> {
   }
 }
 
-async function getTabContext(maxChars = 8000, explicitTabId?: number) {
-  const tabId = await getContextTabId(explicitTabId);
+async function getTabContext(opts: {
+  maxChars?: number;
+  explicitTabId?: number;
+  includeSelection?: boolean;
+  includeExcerpt?: boolean;
+}) {
+  const rawMax = typeof opts.maxChars === 'number' && Number.isFinite(opts.maxChars) ? opts.maxChars : 8000;
+  const maxChars = Math.max(500, Math.min(20_000, Math.floor(rawMax)));
+
+  const includeSelection = opts.includeSelection !== false;
+  const includeExcerpt = opts.includeExcerpt !== false;
+
+  const tabId = await getContextTabId(opts.explicitTabId);
 
   // Best-effort early detection (URL can be unavailable without `tabs` permission).
   let url = '';
@@ -205,6 +217,17 @@ async function getTabContext(maxChars = 8000, explicitTabId?: number) {
     throw new Error(hint ?? 'Context cannot be read on this page. Open a normal webpage and try again.');
   }
 
+  // If the caller doesn't want any page text, avoid injection entirely.
+  if (!includeSelection && !includeExcerpt) {
+    const info = await getTabInfo(tabId);
+    return {
+      title: info.title,
+      url: info.url,
+      selection: '',
+      textExcerpt: ''
+    };
+  }
+
   try {
     // Inject our content script on-demand (requires activeTab + scripting).
     await chrome.scripting.executeScript({
@@ -213,7 +236,8 @@ async function getTabContext(maxChars = 8000, explicitTabId?: number) {
     });
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
-    const hint = getRestrictedPageHint() ??
+    const hint =
+      getRestrictedPageHint() ??
       'Context cannot be read on this page (Chrome Web Store / browser pages). Switch to a normal webpage and try again.';
     // Keep user-facing message clean and stable; raw details vary by browser.
     console.warn('Context injection failed', { tabId, error: raw });
@@ -221,7 +245,7 @@ async function getTabContext(maxChars = 8000, explicitTabId?: number) {
   }
 
   const response = await new Promise<any>((resolve, reject) => {
-    chrome.tabs.sendMessage(tabId, { type: 'CONTENT_CONTEXT_GET', maxChars }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { type: 'CONTENT_CONTEXT_GET', maxChars, includeSelection, includeExcerpt }, (resp) => {
       const err = chrome.runtime.lastError;
       if (err) {
         reject(new Error(err.message));
@@ -239,8 +263,8 @@ async function getTabContext(maxChars = 8000, explicitTabId?: number) {
   return {
     title: normalizeWhitespace(String(result.title ?? '')),
     url: String(result.url ?? ''),
-    selection: String(result.selection ?? ''),
-    textExcerpt: String(result.textExcerpt ?? '')
+    selection: includeSelection ? String(result.selection ?? '') : '',
+    textExcerpt: includeExcerpt ? String(result.textExcerpt ?? '') : ''
   };
 }
 
@@ -345,6 +369,25 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
         return;
       }
 
+      if (message?.type === 'OLLAMA_MODEL_INFO_GET') {
+        const model = typeof message.model === 'string' ? message.model.trim() : '';
+        if (!model) {
+          const resp: BackgroundResponse = {
+            ok: false,
+            type: 'ERROR',
+            error: { message: 'Invalid model' }
+          };
+          sendResponse(resp);
+          return;
+        }
+
+        const data = await showModel(settings.baseUrl, model);
+        const tokenBudget = extractTokenBudget(data);
+        const resp: BackgroundResponse = { ok: true, type: 'OLLAMA_MODEL_INFO_GET_RESULT', model, tokenBudget };
+        sendResponse(resp);
+        return;
+      }
+
       if (message?.type === 'OLLAMA_GENERATE') {
         if (typeof message.prompt !== 'string') {
           const resp: BackgroundResponse = {
@@ -408,11 +451,16 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
       }
 
       if (message?.type === 'TAB_CONTEXT_GET') {
-        const rawMax = typeof message.maxChars === 'number' && Number.isFinite(message.maxChars) ? message.maxChars : 8000;
-        const maxChars = Math.max(500, Math.min(20_000, Math.floor(rawMax)));
         const rawTabId = typeof message.tabId === 'number' && Number.isFinite(message.tabId) ? message.tabId : undefined;
         const tabId = typeof rawTabId === 'number' ? Math.floor(rawTabId) : undefined;
-        const context = await getTabContext(maxChars, tabId);
+        const includeSelection = message.includeSelection !== false;
+        const includeExcerpt = message.includeExcerpt !== false;
+        const context = await getTabContext({
+          maxChars: message.maxChars,
+          explicitTabId: tabId,
+          includeSelection,
+          includeExcerpt
+        });
         const resp: BackgroundResponse = { ok: true, type: 'TAB_CONTEXT_GET_RESULT', context };
         sendResponse(resp);
         return;

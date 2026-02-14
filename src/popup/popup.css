@@ -75,6 +75,9 @@
   --sidebar-max-width: 420px;
   --sidebar-collapsed-width: 48px;
   --sidebar-splitter-width: 6px;
+
+  /* Context preview drawer */
+  --ctx-drawer-width: 0px;
 }
 
 :root[data-sidebar-collapsed='1'] {
@@ -176,9 +179,77 @@ body {
 
 .body {
   display: grid;
-  grid-template-columns: var(--sidebar-width) var(--sidebar-splitter-width) 1fr;
+  grid-template-columns: var(--sidebar-width) var(--sidebar-splitter-width) 1fr var(--ctx-drawer-width);
   min-height: 0;
   min-width: 0;
+}
+
+:root[data-ctx-drawer-open='1'] {
+  --ctx-drawer-width: 360px;
+}
+
+@media (max-width: 720px) {
+  :root[data-ctx-drawer-open='1'] {
+    --ctx-drawer-width: 300px;
+  }
+}
+
+.contextDrawer {
+  border-left: 1px solid var(--c-border-soft);
+  background: var(--c-surface);
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.contextDrawerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--c-border-soft);
+  background: var(--c-surface);
+}
+
+.contextDrawerTitle {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.contextDrawerBody {
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.contextDrawerControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--c-border-soft);
+  background: var(--c-surface-2);
+}
+
+.contextDrawerControls #ctxBudgetMeta {
+  flex: 1 1 100%;
+}
+
+.contextDrawerStatusRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sidebar {
@@ -349,6 +420,11 @@ body.resizingSidebar {
   width: 14px;
   height: 14px;
   display: block;
+  transition: transform 120ms ease;
+}
+
+.iconBtn.isOpen .iconSvg {
+  transform: rotate(180deg);
 }
 
 .miniBtn {
@@ -774,11 +850,87 @@ body.resizing.both {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-rows: auto;
   gap: 8px;
   padding: 10px;
   border-top: 1px solid var(--c-border-soft);
   background: var(--c-surface);
+}
+
+#ctxDrawerToggleBtn {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+#ctxDrawerToggleBtn.isReady {
+  border-color: var(--c-accent-border);
+  background: var(--c-accent);
+}
+
+.composerBottom {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ctxToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.95;
+}
+
+.ctxBudget {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.95;
+}
+
+.ctxBudgetInput {
+  width: 92px;
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--c-border);
+  background: var(--c-surface-2);
+  color: inherit;
+  outline: none;
+}
+
+.ctxMeta {
+  font-size: 12px;
+  opacity: 0.85;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.previewSection {
+  display: grid;
+  gap: 6px;
+}
+
+.previewLabel {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.previewPre {
+  margin: 0;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--c-border-soft);
+  background: var(--c-surface-2);
+  overflow: auto;
+  max-height: 240px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .prompt {
@@ -853,13 +1005,14 @@ body.resizing.both {
 }
 
 .modalOverlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 9999;
   background: rgba(0, 0, 0, 0.55);
   display: grid;
   place-items: center;
   padding: 12px;
+  pointer-events: auto;
 }
 
 :root[data-theme='light'] .modalOverlay {

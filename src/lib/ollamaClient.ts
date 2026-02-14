@@ -8,6 +8,8 @@ type OllamaGenerateResponse = {
   error?: string;
 };
 
+type OllamaShowResponse = Record<string, unknown>;
+
 export type HttpErrorDetails = {
   url: string;
   status: number;
@@ -93,4 +95,16 @@ export async function generate(baseUrl: string, model: string, prompt: string): 
 
   if (data.error) throw new Error(data.error);
   return data.response ?? '';
+}
+
+export async function showModel(baseUrl: string, model: string): Promise<OllamaShowResponse> {
+  const normalized = normalizeBaseUrl(baseUrl);
+  const trimmedModel = model.trim();
+  if (!trimmedModel) throw new Error('Model is empty');
+
+  return await httpJson<OllamaShowResponse>(`${normalized}/api/show`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: trimmedModel })
+  });
 }

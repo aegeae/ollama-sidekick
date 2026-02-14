@@ -24,3 +24,10 @@ test('buildPromptWithOptionalContext prefixes context block', () => {
   assert.ok(out.startsWith('Context (active tab):'));
   assert.ok(out.endsWith('Ask?'));
 });
+
+test('buildContextBlock clips body to provided budget', () => {
+  const long = 'a'.repeat(100);
+  const block = buildContextBlock({ title: 'T', url: 'U', selection: long }, 10);
+  // 10 chars + ellipsis
+  assert.match(block, /aaaaaaaaaa…/);
+});

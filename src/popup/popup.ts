@@ -32,7 +32,8 @@ import {
 import { computeSidebarWidthExpanded } from '../lib/sidebarResizeMath';
 import { tabTitleToChatTitle } from '../lib/tabTitleToChatTitle';
 import { getChatIdForTab, setChatIdForTab } from '../lib/sessionTabChatMap';
-import { buildPromptWithOptionalContext } from '../lib/promptWithContext';
+import { buildContextBlock, buildPromptWithOptionalContext, type TabContextLike } from '../lib/promptWithContext';
+import { buildContextPreviewCacheKey } from '../lib/contextPreviewCacheKey';
 
 const FOLDER_UNAVAILABLE_HINT =
   'Folder picker is not available in this browser. Use Export now (download), and enable “Ask where to save each file” in browser download settings if you want to pick a folder.';
@@ -1613,6 +1614,87 @@ function setContextBadge(text: string, visible: boolean) {
   badge.textContent = text;
 }
 
+type ContextUiPrefs = {
+  includeSelection: boolean;
+  includeExcerpt: boolean;
+  maxChars: number;
+};
+
+const CONTEXT_UI_PREF_INCLUDE_SELECTION_KEY = 'contextIncludeSelection';
+const CONTEXT_UI_PREF_INCLUDE_EXCERPT_KEY = 'contextIncludeExcerpt';
+const CONTEXT_UI_PREF_MAX_CHARS_KEY = 'contextMaxChars';
+
+const DEFAULT_CONTEXT_UI_PREFS: ContextUiPrefs = {
+  includeSelection: true,
+  includeExcerpt: true,
+  maxChars: 8000
+};
+
+let contextUiPrefs: ContextUiPrefs = { ...DEFAULT_CONTEXT_UI_PREFS };
+
+function clampContextMaxChars(n: unknown): number {
+  const raw = typeof n === 'number' && Number.isFinite(n) ? n : Number.parseInt(String(n ?? ''), 10);
+  const v = Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_CONTEXT_UI_PREFS.maxChars;
+  return Math.max(500, Math.min(20_000, v));
+}
+
+async function loadContextUiPrefs(): Promise<ContextUiPrefs> {
+  try {
+    const data = await chrome.storage.local.get([
+      CONTEXT_UI_PREF_INCLUDE_SELECTION_KEY,
+      CONTEXT_UI_PREF_INCLUDE_EXCERPT_KEY,
+      CONTEXT_UI_PREF_MAX_CHARS_KEY
+    ]);
+
+    const includeSelection =
+      typeof data[CONTEXT_UI_PREF_INCLUDE_SELECTION_KEY] === 'boolean'
+        ? Boolean(data[CONTEXT_UI_PREF_INCLUDE_SELECTION_KEY])
+        : DEFAULT_CONTEXT_UI_PREFS.includeSelection;
+
+    const includeExcerpt =
+      typeof data[CONTEXT_UI_PREF_INCLUDE_EXCERPT_KEY] === 'boolean'
+        ? Boolean(data[CONTEXT_UI_PREF_INCLUDE_EXCERPT_KEY])
+        : DEFAULT_CONTEXT_UI_PREFS.includeExcerpt;
+
+    const maxChars = clampContextMaxChars(data[CONTEXT_UI_PREF_MAX_CHARS_KEY]);
+
+    return { includeSelection, includeExcerpt, maxChars };
+  } catch {
+    return { ...DEFAULT_CONTEXT_UI_PREFS };
+  }
+}
+
+async function saveContextUiPrefs(patch: Partial<ContextUiPrefs>): Promise<void> {
+  const toWrite: Record<string, unknown> = {};
+  if (typeof patch.includeSelection === 'boolean') {
+    toWrite[CONTEXT_UI_PREF_INCLUDE_SELECTION_KEY] = patch.includeSelection;
+  }
+  if (typeof patch.includeExcerpt === 'boolean') {
+    toWrite[CONTEXT_UI_PREF_INCLUDE_EXCERPT_KEY] = patch.includeExcerpt;
+  }
+  if (patch.maxChars != null) {
+    toWrite[CONTEXT_UI_PREF_MAX_CHARS_KEY] = clampContextMaxChars(patch.maxChars);
+  }
+  try {
+    await chrome.storage.local.set(toWrite);
+  } catch {
+    // Best-effort.
+  }
+}
+
+function getBaseContextBadgeText(): string {
+  return contextUiPrefs.includeSelection || contextUiPrefs.includeExcerpt ? 'Context Aware' : 'Context off';
+}
+
+function updateContextBudgetMeta() {
+  const el = document.getElementById('ctxBudgetMeta') as HTMLSpanElement | null;
+  if (!el) return;
+  const maxChars = contextUiPrefs.maxChars;
+  const budget = currentModelTokenBudget;
+  const budgetText = budget == null ? '—' : budget.toLocaleString();
+  el.textContent = `${maxChars.toLocaleString()} chars | Model ctx: ${budgetText} tok`;
+}
+
 function formatContextAttachError(err: unknown): string {
   const msg = errorMessage(err).trim();
 
@@ -1631,12 +1713,215 @@ function formatContextAttachError(err: unknown): string {
   return msg;
 }
 
-async function getTabContext(maxChars = 8000): Promise<TabContext> {
+async function getTabContext(opts?: {
+  maxChars?: number;
+  includeSelection?: boolean;
+  includeExcerpt?: boolean;
+}): Promise<TabContext> {
   const tabId = getContextTargetTabId();
-  const resp = await sendMessage({ type: 'TAB_CONTEXT_GET', maxChars, tabId: tabId ?? undefined });
+  const resp = await sendMessage({
+    type: 'TAB_CONTEXT_GET',
+    maxChars: opts?.maxChars,
+    tabId: tabId ?? undefined,
+    includeSelection: opts?.includeSelection,
+    includeExcerpt: opts?.includeExcerpt
+  });
   if (!resp.ok) throw new Error(formatError(resp));
   if (resp.type !== 'TAB_CONTEXT_GET_RESULT') throw new Error('Unexpected response while reading tab context');
   return resp.context;
+}
+
+type PreparedSend = {
+  userPrompt: string;
+  model: string;
+  finalPrompt: string;
+  contextBlock: string;
+  ctx: TabContextLike | null;
+  contextNote: string | null;
+  contextAttached: boolean;
+};
+
+let currentModelTokenBudget: number | null = null;
+
+let ctxDrawerOpen = false;
+
+let ctxDrawerCache: {
+  key: string;
+  ctx: TabContextLike | null;
+  contextBlock: string;
+  contextNote: string | null;
+  contextAttached: boolean;
+} | null = null;
+
+function getCtxDrawerCacheKey(): string {
+  return buildContextPreviewCacheKey({
+    tabId: getContextTargetTabId(),
+    includeSelection: contextUiPrefs.includeSelection,
+    includeExcerpt: contextUiPrefs.includeExcerpt,
+    maxChars: contextUiPrefs.maxChars
+  });
+}
+
+function setCtxDrawerOpen(open: boolean) {
+  ctxDrawerOpen = open;
+  if (open) {
+    document.documentElement.dataset.ctxDrawerOpen = '1';
+  } else {
+    delete document.documentElement.dataset.ctxDrawerOpen;
+  }
+
+  const drawer = document.getElementById('contextDrawer') as HTMLElement | null;
+  if (drawer) drawer.hidden = !open;
+
+  const toggleBtn = document.getElementById('ctxDrawerToggleBtn') as HTMLButtonElement | null;
+  if (toggleBtn) {
+    toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false');
+    // Swap chevron direction by flipping the SVG via CSS class.
+    toggleBtn.classList.toggle('isOpen', open);
+    if (!open) toggleBtn.classList.remove('isReady');
+  }
+}
+
+function setCtxDrawerStatus(text: string) {
+  const el = document.getElementById('ctxDrawerStatus') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function setCtxDrawerText(contextText: string, promptText: string) {
+  const ctxEl = document.getElementById('ctxDrawerContext') as HTMLPreElement | null;
+  const pEl = document.getElementById('ctxDrawerPrompt') as HTMLPreElement | null;
+  if (ctxEl) ctxEl.textContent = contextText;
+  if (pEl) pEl.textContent = promptText;
+}
+
+async function refreshModelTokenBudget(model: string): Promise<void> {
+  const trimmed = model.trim();
+  if (!trimmed) {
+    currentModelTokenBudget = null;
+    updateContextBudgetMeta();
+    return;
+  }
+
+  try {
+    const resp = await sendMessage({ type: 'OLLAMA_MODEL_INFO_GET', model: trimmed });
+    if (!resp.ok) {
+      currentModelTokenBudget = null;
+      updateContextBudgetMeta();
+      return;
+    }
+    if (resp.type !== 'OLLAMA_MODEL_INFO_GET_RESULT') {
+      currentModelTokenBudget = null;
+      updateContextBudgetMeta();
+      return;
+    }
+    currentModelTokenBudget = typeof resp.tokenBudget === 'number' ? resp.tokenBudget : null;
+    updateContextBudgetMeta();
+  } catch {
+    currentModelTokenBudget = null;
+    updateContextBudgetMeta();
+  }
+}
+
+async function prepareSendForPreview(userPrompt: string, model: string): Promise<PreparedSend> {
+  const trimmed = userPrompt.trim();
+
+  // If both toggles are off, do not even ask the background to inject a content script.
+  if (!contextUiPrefs.includeSelection && !contextUiPrefs.includeExcerpt) {
+    return {
+      userPrompt: trimmed,
+      model,
+      finalPrompt: trimmed,
+      contextBlock: '',
+      ctx: null,
+      contextNote: 'Context disabled.',
+      contextAttached: false
+    };
+  }
+
+  try {
+    const ctx = await getTabContext({
+      maxChars: contextUiPrefs.maxChars,
+      includeSelection: contextUiPrefs.includeSelection,
+      includeExcerpt: contextUiPrefs.includeExcerpt
+    });
+
+    const hasBody = Boolean((ctx.selection ?? '').trim() || (ctx.textExcerpt ?? '').trim());
+    if (!hasBody) {
+      return {
+        userPrompt: trimmed,
+        model,
+        finalPrompt: trimmed,
+        contextBlock: '',
+        ctx: null,
+        contextNote: 'Context empty (no selection/excerpt found).',
+        contextAttached: false
+      };
+    }
+
+    const contextBlock = buildContextBlock(ctx, contextUiPrefs.maxChars);
+    // Allow previewing context with an empty prompt, but don't pretend we have a final prompt.
+    const finalPrompt = trimmed ? buildPromptWithOptionalContext(trimmed, ctx, contextUiPrefs.maxChars) : '';
+    return {
+      userPrompt: trimmed,
+      model,
+      finalPrompt,
+      contextBlock,
+      ctx,
+      contextNote: null,
+      contextAttached: true
+    };
+  } catch (e) {
+    const note = `Context not attached: ${formatContextAttachError(e)}`;
+    return {
+      userPrompt: trimmed,
+      model,
+      finalPrompt: trimmed,
+      contextBlock: '',
+      ctx: null,
+      contextNote: note,
+      contextAttached: false
+    };
+  }
+}
+
+async function refreshCtxDrawerFromComposer(): Promise<void> {
+  const model = ($('modelSelect') as HTMLSelectElement).value;
+  const prompt = ($('prompt') as HTMLTextAreaElement).value;
+  const trimmed = prompt.trim();
+
+  setCtxDrawerStatus('Preparing…');
+  setCtxDrawerText('Loading…', '');
+
+  const prepared = await prepareSendForPreview(trimmed, model);
+  const ctxText = prepared.contextBlock || '(No context will be attached.)';
+  const promptText = prepared.finalPrompt || '(Empty prompt)';
+  setCtxDrawerText(ctxText, promptText);
+  setCtxDrawerStatus(prepared.contextNote ?? (prepared.contextAttached ? 'Context will be attached.' : ''));
+
+  ctxDrawerCache = {
+    key: getCtxDrawerCacheKey(),
+    ctx: prepared.ctx,
+    contextBlock: prepared.contextBlock,
+    contextNote: prepared.contextNote,
+    contextAttached: prepared.contextAttached
+  };
+
+  const toggleBtn = document.getElementById('ctxDrawerToggleBtn') as HTMLButtonElement | null;
+  if (toggleBtn) toggleBtn.classList.toggle('isReady', prepared.contextAttached);
+}
+
+function refreshCtxDrawerPromptOnly(): void {
+  if (!ctxDrawerOpen) return;
+  const prompt = ($('prompt') as HTMLTextAreaElement).value;
+  const trimmed = prompt.trim();
+
+  const ctxText = ctxDrawerCache?.contextBlock || '(No context will be attached.)';
+  const finalPrompt = ctxDrawerCache?.ctx && trimmed
+    ? buildPromptWithOptionalContext(trimmed, ctxDrawerCache.ctx, contextUiPrefs.maxChars)
+    : '';
+  setCtxDrawerText(ctxText, finalPrompt || '(Empty prompt)');
+  setCtxDrawerStatus(ctxDrawerCache?.contextNote ?? (ctxDrawerCache?.contextAttached ? 'Context will be attached.' : ''));
 }
 
 async function loadModels() {
@@ -1685,7 +1970,7 @@ async function fetchModels(): Promise<string[]> {
   }
 }
 
-async function onGenerate() {
+async function sendPrepared(prepared: PreparedSend) {
   if (state.generating) return;
 
   if (!chatStoreState) {
@@ -1695,10 +1980,9 @@ async function onGenerate() {
   if (!activeChatId) return;
 
   const promptEl = $('prompt') as HTMLTextAreaElement;
-  const prompt = promptEl.value;
-  const model = ($('modelSelect') as HTMLSelectElement).value;
+  const model = prepared.model;
 
-  const trimmed = prompt.trim();
+  const trimmed = prepared.userPrompt.trim();
   if (!trimmed) return;
 
   // Sending a message exits prompt history navigation.
@@ -1717,20 +2001,22 @@ async function onGenerate() {
   setGenerating(true);
 
   try {
-    let finalPrompt = trimmed;
-    try {
-      const ctx = await getTabContext(8000);
-      finalPrompt = buildPromptWithOptionalContext(trimmed, ctx);
-      setContextBadge('Context attached', true);
-      setTimeout(() => setContextBadge('Context Aware', true), 1500);
-    } catch (e) {
-      // Context is best-effort; show a system message and continue without it.
-      const text = `Context not attached: ${formatContextAttachError(e)}`;
+    const finalPrompt = prepared.finalPrompt;
+
+    // If context failed (or was disabled), keep the log consistent with the old best-effort behavior.
+    if (prepared.contextNote && prepared.contextNote.startsWith('Context not attached:')) {
+      const text = prepared.contextNote;
       const id = uid();
       chatStoreState = await appendMessage(activeChatId, { role: 'system', text, ts: Date.now(), id });
       addMessageWithId('system', text, id);
       setContextBadge('Context unavailable', true);
-      setTimeout(() => setContextBadge('Context Aware', true), 2000);
+      setTimeout(() => setContextBadge(getBaseContextBadgeText(), true), 2000);
+    } else if (prepared.contextAttached) {
+      setContextBadge('Context attached', true);
+      setTimeout(() => setContextBadge(getBaseContextBadgeText(), true), 1500);
+    } else if (prepared.contextNote === 'Context disabled.') {
+      setContextBadge('Context off', true);
+      setTimeout(() => setContextBadge(getBaseContextBadgeText(), true), 1500);
     }
 
     const resp = await sendMessage({ type: 'OLLAMA_GENERATE', prompt: finalPrompt, model });
@@ -1777,6 +2063,28 @@ async function onGenerate() {
   }
 }
 
+async function onSendRequested() {
+  if (state.generating) return;
+
+  if (!chatStoreState) {
+    chatStoreState = await getState();
+  }
+  const activeChatId = getActiveChatId();
+  if (!activeChatId) return;
+
+  const promptEl = $('prompt') as HTMLTextAreaElement;
+  const model = ($('modelSelect') as HTMLSelectElement).value;
+  const prompt = promptEl.value;
+  const trimmed = prompt.trim();
+  if (!trimmed) return;
+
+  // Sending a message exits prompt history navigation.
+  clearPromptHistoryNav();
+
+  const prepared = await prepareSendForPreview(trimmed, model);
+  await sendPrepared(prepared);
+}
+
 async function main() {
   const mode = getPageModeFromUrl();
   pageMode = mode;
@@ -1808,7 +2116,13 @@ async function main() {
   const promptEl = $('prompt') as HTMLTextAreaElement;
   const modelSelect = $('modelSelect') as HTMLSelectElement;
 
-  btn.addEventListener('click', () => void onGenerate());
+  const ctxSelEl = document.getElementById('ctxIncludeSelection') as HTMLInputElement | null;
+  const ctxExEl = document.getElementById('ctxIncludeExcerpt') as HTMLInputElement | null;
+  const ctxMaxEl = document.getElementById('ctxMaxChars') as HTMLInputElement | null;
+  const ctxDrawerToggleBtn = document.getElementById('ctxDrawerToggleBtn') as HTMLButtonElement | null;
+  const ctxDrawerCloseBtn = document.getElementById('ctxDrawerCloseBtn') as HTMLButtonElement | null;
+
+  btn.addEventListener('click', () => void onSendRequested());
 
   setupSettingsModal(() => {
     // Reload models if base URL / default model changed.
@@ -1819,6 +2133,8 @@ async function main() {
     const model = modelSelect.value;
     void setSettings({ model });
     settingsModelUiSync?.syncModel(model);
+    void refreshModelTokenBudget(model);
+    if (ctxDrawerOpen) refreshCtxDrawerPromptOnly();
   });
 
   promptEl.addEventListener('compositionstart', () => {
@@ -1836,6 +2152,10 @@ async function main() {
       return;
     }
     clearPromptHistoryNav();
+
+    if (ctxDrawerOpen) {
+      refreshCtxDrawerPromptOnly();
+    }
   });
   promptEl.addEventListener('keydown', (ev) => {
     if (ev.key === 'ArrowUp') {
@@ -1854,9 +2174,75 @@ async function main() {
 
     if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault();
-      void onGenerate();
+      void onSendRequested();
     }
   });
+
+  // Context drawer toggle + close.
+  setCtxDrawerOpen(false);
+  if (ctxDrawerToggleBtn) {
+    ctxDrawerToggleBtn.addEventListener('click', () => {
+      void (async () => {
+        const next = !ctxDrawerOpen;
+        setCtxDrawerOpen(next);
+        if (next) {
+          const key = getCtxDrawerCacheKey();
+          if (ctxDrawerCache && ctxDrawerCache.key === key) {
+            refreshCtxDrawerPromptOnly();
+            const toggleBtn = document.getElementById('ctxDrawerToggleBtn') as HTMLButtonElement | null;
+            if (toggleBtn) toggleBtn.classList.toggle('isReady', ctxDrawerCache.contextAttached);
+            return;
+          }
+
+          await refreshCtxDrawerFromComposer();
+        }
+      })();
+    });
+  }
+  if (ctxDrawerCloseBtn) {
+    ctxDrawerCloseBtn.addEventListener('click', () => {
+      setCtxDrawerOpen(false);
+    });
+  }
+
+  // Load + apply context UI prefs (stored locally, never page content).
+  contextUiPrefs = await loadContextUiPrefs();
+  if (ctxSelEl) ctxSelEl.checked = contextUiPrefs.includeSelection;
+  if (ctxExEl) ctxExEl.checked = contextUiPrefs.includeExcerpt;
+  if (ctxMaxEl) ctxMaxEl.value = String(contextUiPrefs.maxChars);
+  updateContextBudgetMeta();
+  setContextBadge(getBaseContextBadgeText(), true);
+
+  const onContextPrefsChanged = () => {
+    ctxDrawerCache = null;
+    updateContextBudgetMeta();
+    setContextBadge(getBaseContextBadgeText(), true);
+    if (ctxDrawerOpen) void refreshCtxDrawerFromComposer();
+  };
+
+  if (ctxSelEl) {
+    ctxSelEl.addEventListener('change', () => {
+      contextUiPrefs.includeSelection = Boolean(ctxSelEl.checked);
+      void saveContextUiPrefs({ includeSelection: contextUiPrefs.includeSelection });
+      onContextPrefsChanged();
+    });
+  }
+  if (ctxExEl) {
+    ctxExEl.addEventListener('change', () => {
+      contextUiPrefs.includeExcerpt = Boolean(ctxExEl.checked);
+      void saveContextUiPrefs({ includeExcerpt: contextUiPrefs.includeExcerpt });
+      onContextPrefsChanged();
+    });
+  }
+  if (ctxMaxEl) {
+    ctxMaxEl.addEventListener('change', () => {
+      const next = clampContextMaxChars(ctxMaxEl.value);
+      contextUiPrefs.maxChars = next;
+      ctxMaxEl.value = String(next);
+      void saveContextUiPrefs({ maxChars: next });
+      onContextPrefsChanged();
+    });
+  }
 
   autoGrowTextarea(promptEl);
   setGenerating(false);
@@ -1876,14 +2262,17 @@ async function main() {
   setMessagesFromActiveChat();
   renderSidebar();
 
-  // Context is always-on by default.
-  setContextBadge('Context Aware', true);
+  // Context badge reflects current preference state.
+  setContextBadge(getBaseContextBadgeText(), true);
 
   try {
     await loadModels();
   } catch (e) {
     addMessage('error', `Failed to load models. Is Ollama running?\n${errorMessage(e)}`);
   }
+
+  // Fetch token budget for the initially selected model.
+  void refreshModelTokenBudget((document.getElementById('modelSelect') as HTMLSelectElement | null)?.value ?? '');
 
   // URL param support (used by context-menu open and window-mode deep links)
   const qs = getQueryStateFromUrl();
@@ -1900,7 +2289,7 @@ async function main() {
     promptEl.value = qs.prompt;
     autoGrowTextarea(promptEl);
     if (qs.auto) {
-      await onGenerate();
+      await onSendRequested();
     }
   }
 

@@ -20,6 +20,25 @@
           <button id="settingsBtn" class="miniBtn" type="button" title="Settings">
             Settings
           </button>
+
+          <button
+            id="ctxDrawerToggleBtn"
+            class="iconBtn"
+            type="button"
+            aria-label="Toggle context preview"
+            title="Context preview"
+          >
+            <svg class="iconSvg" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M6 3l5 5-5 5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -153,6 +172,67 @@
 
           <section id="chat" class="chat" aria-label="Chat"></section>
         </div>
+
+        <aside id="contextDrawer" class="contextDrawer" aria-label="Context preview" hidden>
+          <div class="contextDrawerHeader">
+            <div class="contextDrawerTitle">Context preview</div>
+            <button id="ctxDrawerCloseBtn" class="iconBtn" type="button" aria-label="Close context preview" title="Close">
+              <svg class="iconSvg" viewBox="0 0 16 16" aria-hidden="true">
+                <path
+                  d="M4 4l8 8M12 4 4 12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <div class="contextDrawerBody">
+            <div class="contextDrawerControls" aria-label="Context controls">
+              <label class="ctxToggle">
+                <input id="ctxIncludeSelection" type="checkbox" />
+                Selection
+              </label>
+
+              <label class="ctxToggle">
+                <input id="ctxIncludeExcerpt" type="checkbox" />
+                Excerpt
+              </label>
+
+              <label class="ctxBudget">
+                Budget
+                <input
+                  id="ctxMaxChars"
+                  class="ctxBudgetInput"
+                  type="number"
+                  inputmode="numeric"
+                  min="500"
+                  max="20000"
+                  step="500"
+                  aria-label="Context character budget"
+                />
+              </label>
+
+              <span id="ctxBudgetMeta" class="ctxMeta" aria-live="polite"></span>
+            </div>
+
+            <div class="previewSection">
+              <div class="previewLabel">Context</div>
+              <pre id="ctxDrawerContext" class="previewPre" aria-label="Context preview"></pre>
+            </div>
+
+            <div class="previewSection">
+              <div class="previewLabel">Final prompt</div>
+              <pre id="ctxDrawerPrompt" class="previewPre" aria-label="Final prompt preview"></pre>
+            </div>
+
+            <div class="contextDrawerStatusRow">
+              <span id="ctxDrawerStatus" class="modalStatus" aria-live="polite"></span>
+            </div>
+          </div>
+        </aside>
       </section>
 
       <div id="resizeBar" class="resizeBar" title="Drag to resize">
@@ -160,6 +240,7 @@
       </div>
 
       <footer class="composer">
+        <div class="composerBottom">
         <textarea
           id="prompt"
           class="prompt"
@@ -167,6 +248,7 @@
           placeholder="Ask Ollama… (Enter to send, Shift+Enter for newline)"
         ></textarea>
         <button id="generateBtn" class="send" type="button" aria-label="Send" title="Send"></button>
+        </div>
       </footer>
 
       <div id="output" class="srOnly" aria-live="polite"></div>
@@ -257,6 +339,7 @@
           </div>
         </div>
       </div>
+
     </main>
 
     <script type="module" src="./popup.ts"></script>

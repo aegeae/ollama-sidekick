@@ -1,55 +1,217 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
   margin: 0;
   min-width: 360px;
+  background: #0b0f14;
+  color: #e6edf3;
 }
 
-.wrap {
-  padding: 12px;
-}
-
-h1 {
-  font-size: 16px;
-  margin: 0 0 10px;
-}
-
-.label {
+.app {
+  height: 600px;
   display: grid;
-  gap: 6px;
-  font-size: 12px;
-  margin: 10px 0;
+  grid-template-rows: auto 1fr auto;
 }
 
-select,
-textarea,
-button {
-  font: inherit;
-}
-
-textarea {
-  resize: vertical;
-}
-
-.row {
+.topbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  padding: 10px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
 }
 
-.link {
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model {
+  max-width: 200px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  outline: none;
+}
+
+.iconLink {
+  font-size: 12px;
+  text-decoration: none;
+  color: #c9d1d9;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.iconLink:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.chat {
+  padding: 12px;
+  overflow: auto;
+}
+
+.msgRow {
+  display: flex;
+  margin: 8px 0;
+}
+
+.msgRow.role-user {
+  justify-content: flex-end;
+}
+
+.msgRow.role-assistant,
+.msgRow.role-system,
+.msgRow.role-error {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 88%;
+  padding: 10px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.role-user .bubble {
+  background: rgba(56, 139, 253, 0.12);
+  border-color: rgba(56, 139, 253, 0.22);
+}
+
+.role-system .bubble {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.08);
+  opacity: 0.9;
+}
+
+.role-error .bubble {
+  background: rgba(248, 81, 73, 0.10);
+  border-color: rgba(248, 81, 73, 0.22);
+}
+
+.bubble.pending {
+  opacity: 0.85;
+}
+
+.text {
+  line-height: 1.35;
+  font-size: 12.5px;
+}
+
+.code {
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(0, 0, 0, 0.25);
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
 }
 
-.output {
-  margin-top: 10px;
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
   padding: 10px;
-  border: 1px solid rgba(127, 127, 127, 0.3);
-  border-radius: 8px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  min-height: 80px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.prompt {
+  width: 100%;
+  resize: none;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  outline: none;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.prompt:disabled {
+  opacity: 0.7;
+}
+
+.send {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+  position: relative;
+}
+
+/* Paper-plane style via CSS only */
+.send::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 0;
+  height: 0;
+  border-left: 12px solid #e6edf3;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  transform: translateX(1px);
+  opacity: 0.95;
+}
+
+.send:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.send:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.send.isLoading::before {
+  border-left-color: rgba(230, 237, 243, 0.35);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

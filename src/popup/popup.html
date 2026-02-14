@@ -3,29 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ollama</title>
+    <title>Ollama Chat</title>
     <link rel="stylesheet" href="./popup.css" />
   </head>
   <body>
-    <main class="wrap">
-      <h1>Ollama</h1>
+    <main class="app">
+      <header class="topbar">
+        <div class="title">Ollama Chat</div>
 
-      <label class="label">
-        Model
-        <select id="modelSelect"></select>
-      </label>
+        <div class="controls">
+          <select id="modelSelect" class="model" aria-label="Model"></select>
+          <a class="iconLink" href="../options/options.html" target="_blank" rel="noreferrer" aria-label="Options" title="Options">
+            Options
+          </a>
+        </div>
+      </header>
 
-      <label class="label">
-        Prompt
-        <textarea id="prompt" rows="6" placeholder="Ask something..."></textarea>
-      </label>
+      <section id="chat" class="chat" aria-label="Chat"></section>
 
-      <div class="row">
-        <button id="generateBtn">Generate</button>
-        <a class="link" href="../options/options.html" target="_blank" rel="noreferrer">Options</a>
-      </div>
+      <footer class="composer">
+        <textarea
+          id="prompt"
+          class="prompt"
+          rows="1"
+          placeholder="Ask Ollama… (Enter to send, Shift+Enter for newline)"
+        ></textarea>
+        <button id="generateBtn" class="send" type="button" aria-label="Send" title="Send"></button>
+      </footer>
 
-      <pre id="output" class="output"></pre>
+      <div id="output" class="srOnly" aria-live="polite"></div>
     </main>
 
     <script type="module" src="./popup.ts"></script>

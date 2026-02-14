@@ -2,12 +2,13 @@
 
 This repo treats `main` as the protected **release branch**.
 
-On every push/merge to `main`, GitHub Actions will:
+On every push/merge to `main`, GitHub Actions runs **semantic-release** to:
 
 1) Determine the next SemVer version from commit messages (Conventional Commits)
-2) Bump versions in `package.json` and `manifest.json`
-3) Create an annotated tag `vX.Y.Z`
-4) The tag push triggers the existing workflow in `.github/workflows/release.yml` which builds and uploads `ollama-sidekick.zip` to a GitHub Release
+2) Update `CHANGELOG.md`
+3) Bump versions in `package.json` and `manifest.json` (kept in sync)
+4) Create an annotated tag `vX.Y.Z`
+5) Build `ollama-sidekick.zip` and attach it to the GitHub Release
 
 ## Conventional Commit → version rules
 
@@ -17,12 +18,6 @@ The workflow looks at commit messages since the latest `v*` tag:
 - **MINOR** if any commit subject starts with `feat:` (or `feat(scope):`)
 - **PATCH** if any commit subject starts with `fix:` (or `fix(scope):`)
 - **NONE** if none of the above match → no bump and no tag
-
-### Bootstrap (first tag)
-
-If there are **no** existing `v*` tags yet, automation will create an initial tag `v<package.json version>` (for example `v0.1.0`) so that tags align with the extension’s current version.
-
-Only **one** new tag is created per push to `main` (based on all commits in that push).
 
 ## Required GitHub settings (branch protection)
 
@@ -58,25 +53,22 @@ If you want a quick CLI jump into the right place:
 
 ## How it works (repo files)
 
-- `scripts/next-version.mjs` computes bump + next version from git history
-- `scripts/apply-version.mjs` applies the version to `package.json` + `manifest.json`
-- `.github/workflows/auto-release.yml` runs on push to `main` and performs bump+tag
-- `.github/workflows/release.yml` creates the GitHub Release + zip
+- `.releaserc.json` configures `semantic-release` (bump rules, changelog, tagging, GitHub Release)
+- `scripts/sync-manifest-version.mjs` keeps `manifest.json` version aligned with `package.json`
+- `.github/workflows/auto-release.yml` runs on push to `main` and runs `semantic-release`
 
-### Note: why GitHub Releases might be missing
+### Note: why `release.yml` no longer triggers on tags
 
-If tags are created/pushed by GitHub Actions using the default `GITHUB_TOKEN`, GitHub often does **not** trigger other workflows from that tag push.
-
-To make releases reliable, `auto-release.yml` explicitly dispatches `release.yml` via `workflow_dispatch` after it creates/pushes the tag.
+`semantic-release` now creates the GitHub Release and uploads `ollama-sidekick.zip` itself, so we avoid relying on tag-triggered workflows.
 
 ## Verifying tags / releases
 
 - Tags: GitHub → **Releases** / **Tags**
 - Actions: GitHub → **Actions**
   - `Auto Release (main)` should run on pushes to `main`
-  - `Release` should run right after tagging (dispatched by Auto Release)
+  - The `Release` workflow is optional/manual only
 
-You can also run `Release` manually:
+You can still run `Release` manually (optional):
 
 - GitHub → **Actions** → **Release** → **Run workflow** → set `tag` to e.g. `v0.4.0`
 
@@ -103,15 +95,9 @@ Quick sanity check (optional):
 
 ## Manual fallback
 
-If automation fails, you can still create a release tag manually:
+If automation fails, you can run a release from your machine:
 
-- Ensure versions are correct (optional):
-  - `node scripts/apply-version.mjs 0.1.1 --manifest manifest.json`
-- Commit the version bump:
-  - `git add package.json manifest.json package-lock.json`
-  - `git commit -m "chore(release): v0.1.1"`
-- Tag + push:
-  - `git tag -a v0.1.1 -m v0.1.1`
-  - `git push origin main --follow-tags`
-
-Pushing `v0.1.1` will trigger the GitHub Release workflow.
+- Dry-run:
+  - `npm run release:dry`
+- Real release (requires a GitHub token and push access):
+  - `npm run release`

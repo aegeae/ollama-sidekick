@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: auto-release-main
@@ -52,120 +51,21 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Compute next version
-        id: next
-        run: node scripts/next-version.mjs --github-output
+      - name: Typecheck
+        run: npm run typecheck
 
-      - name: No bump needed
-        if: steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base != 'true'
-        run: echo "No version bump needed; exiting."
+      - name: Test
+        run: npm test
 
-      - name: Check if tag already exists
-        id: tagcheck
-        if: steps.next.outputs.bump != 'none' || steps.next.outputs.should_tag_base == 'true'
-        shell: bash
+      - name: Build
+        run: npm run build
+
+      - name: Configure git identity
         run: |
-          set -euo pipefail
-          TAG="${{ steps.next.outputs.tag }}"
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag $TAG already exists; skipping."
-          else
-            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Bootstrap tag only (no version bump)
-        if: steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          TAG="${{ steps.next.outputs.tag }}"
-          git tag -a "$TAG" -m "$TAG"
-          git push origin "$TAG"
-          echo "Bootstrapped initial tag $TAG"
-
-      - name: Apply version to package + manifest
-        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
-        run: node scripts/apply-version.mjs "${{ steps.next.outputs.version }}" --manifest manifest.json
-
-      - name: Commit release bump
-        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if [ -z "$(git status --porcelain=v1)" ]; then
-            echo "No changes to commit; exiting."
-            exit 0
-          fi
-
-          VERSION="${{ steps.next.outputs.version }}"
-          git add package.json manifest.json package-lock.json || true
-          git commit -m "chore(release): v$VERSION [skip ci]"
-
-      - name: Create annotated tag
-        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.next.outputs.tag }}"
-          git tag -a "$TAG" -m "$TAG"
-
-      - name: Push commit + tag
-        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git push origin HEAD:main
-          git push origin "${{ steps.next.outputs.tag }}"
-
-      - name: Build + zip (artifact)
-        if: |
-          (
-            (steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true') ||
-            (steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true')
-          )
-        run: npm run package:zip
-
-      - name: Upload installable zip artifact
-        if: |
-          (
-            (steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true') ||
-            (steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true')
-          )
-        uses: actions/upload-artifact@v4
-        with:
-          name: ollama-sidekick-${{ steps.next.outputs.tag }}
-          path: ollama-sidekick.zip
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Trigger Release workflow (create GitHub Release)
-        if: |
-          (
-            (steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true') ||
-            (steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true')
-          )
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const tag = `${{ steps.next.outputs.tag }}`;
-            core.info(`Dispatching release.yml for tag ${tag}`);
-
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'release.yml',
-              ref: 'main',
-              inputs: { tag },
-            });
-
-      - name: Summary
-        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
-        run: |
-          echo "Released ${{ steps.next.outputs.tag }} (bump: ${{ steps.next.outputs.bump }})"
-          echo "GitHub Release + zip will be created by .github/workflows/release.yml on tag push."
+      - name: Release (semantic-release)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release

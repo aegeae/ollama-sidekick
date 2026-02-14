@@ -252,6 +252,43 @@
               <input id="settingsFontSize" class="formInput" type="number" inputmode="numeric" min="11" max="20" step="1" />
             </label>
 
+            <label class="formLabel">
+              Conversation history storage
+              <select id="settingsHistoryStorageMode" class="formSelect">
+                <option value="local">Local (browser storage)</option>
+                <option value="folder">Folder (export)</option>
+              </select>
+            </label>
+
+            <label class="formLabel">
+              Export format
+              <select id="settingsHistoryExportFormat" class="formSelect">
+                <option value="json">JSON (single file)</option>
+                <option value="jsonl">JSONL (single file)</option>
+                <option value="md">Markdown</option>
+              </select>
+            </label>
+
+            <label class="formLabel">
+              <span>Auto-export on send (JSON/JSONL)</span>
+              <label class="toggle" title="Auto-export chat history to folder after each response">
+                <input id="settingsHistoryAutoExportOnSend" type="checkbox" />
+                <span class="toggleUi" aria-hidden="true"></span>
+                <span class="toggleLabel">Auto-export</span>
+              </label>
+            </label>
+
+            <div id="settingsHistoryFolderRow" class="modalActions">
+              <button id="settingsChooseHistoryFolderBtn" class="miniBtn" type="button">Choose folder…</button>
+              <button id="settingsClearHistoryFolderBtn" class="miniBtn" type="button">Clear</button>
+              <span id="settingsHistoryFolderStatus" class="modalStatus"></span>
+            </div>
+
+            <div class="modalActions">
+              <button id="settingsExportHistoryBtn" class="miniBtn" type="button">Export now</button>
+              <span id="settingsHistoryExportStatus" class="modalStatus" aria-live="polite"></span>
+            </div>
+
             <div class="modalActions">
               <button id="settingsSaveBtn" class="miniBtn" type="button">Save</button>
               <button id="settingsCancelBtn" class="miniBtn" type="button">Cancel</button>

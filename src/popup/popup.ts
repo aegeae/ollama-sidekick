@@ -22,6 +22,16 @@ import {
   type ChatSummary,
   type StoredMessage
 } from '../lib/chatStore';
+import { getHistoryDirectoryHandle, setHistoryDirectoryHandle, clearHistoryDirectoryHandle } from '../lib/persistedHandles';
+import {
+  exportHistoryAsDownload,
+  exportHistoryToDirectory,
+  pickDirectory,
+  supportsFileSystemAccessApi
+} from '../lib/historyExportFs';
+
+const FOLDER_UNAVAILABLE_HINT =
+  'Folder picker is not available in this browser. Use Export now (download), and enable “Ask where to save each file” in browser download settings if you want to pick a folder.';
 
 function $(id: string) {
   const el = document.getElementById(id);
@@ -71,6 +81,34 @@ function getTabIdFromUrl(): number | null {
   if (!Number.isFinite(n)) return null;
   const tabId = Math.floor(n);
   return tabId > 0 ? tabId : null;
+}
+
+const SESSION_USE_CONTEXT_ENABLED_KEY = 'useContextEnabled';
+
+function getContextEnabledOverrideFromUrl(): boolean | null {
+  const url = new URL(location.href);
+  const raw = url.searchParams.get('context');
+  if (!raw) return null;
+  if (raw === '1' || raw.toLowerCase() === 'true') return true;
+  if (raw === '0' || raw.toLowerCase() === 'false') return false;
+  return null;
+}
+
+async function getSavedUseContextEnabled(): Promise<boolean> {
+  try {
+    const data = await chrome.storage.session.get([SESSION_USE_CONTEXT_ENABLED_KEY]);
+    return data[SESSION_USE_CONTEXT_ENABLED_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+async function setSavedUseContextEnabled(enabled: boolean): Promise<void> {
+  try {
+    await chrome.storage.session.set({ [SESSION_USE_CONTEXT_ENABLED_KEY]: enabled });
+  } catch {
+    // ignore
+  }
 }
 
 function getContextTargetTabId(): number | null {
@@ -884,6 +922,12 @@ async function openPopoutWindow() {
   const tabId = getContextTargetTabId();
   if (typeof tabId === 'number') url.searchParams.set('tabId', String(tabId));
 
+  // Keep context toggle consistent between popup and pop-out.
+  const useContextEl = document.getElementById('useContextToggle') as HTMLInputElement | null;
+  const enabled = useContextEl ? useContextEl.checked : await getSavedUseContextEnabled();
+  if (enabled) url.searchParams.set('context', '1');
+  void setSavedUseContextEnabled(enabled);
+
   await chrome.windows.create({
     url: url.toString(),
     type: 'popup',
@@ -957,13 +1001,40 @@ function setupSettingsModal(onSaved: () => void) {
   const fontEl = document.getElementById('settingsFontFamily') as HTMLSelectElement | null;
   const sizeEl = document.getElementById('settingsFontSize') as HTMLInputElement | null;
 
+  const historyModeEl = document.getElementById('settingsHistoryStorageMode') as HTMLSelectElement | null;
+  const historyFormatEl = document.getElementById('settingsHistoryExportFormat') as HTMLSelectElement | null;
+  const historyAutoEl = document.getElementById('settingsHistoryAutoExportOnSend') as HTMLInputElement | null;
+  const historyFolderRow = document.getElementById('settingsHistoryFolderRow') as HTMLDivElement | null;
+  const chooseHistoryFolderBtn = document.getElementById('settingsChooseHistoryFolderBtn') as HTMLButtonElement | null;
+  const clearHistoryFolderBtn = document.getElementById('settingsClearHistoryFolderBtn') as HTMLButtonElement | null;
+  const historyFolderStatusEl = document.getElementById('settingsHistoryFolderStatus') as HTMLSpanElement | null;
+  const exportHistoryBtn = document.getElementById('settingsExportHistoryBtn') as HTMLButtonElement | null;
+  const historyExportStatusEl = document.getElementById('settingsHistoryExportStatus') as HTMLSpanElement | null;
+
   if (!overlay || !openBtn || !closeBtn || !cancelBtn || !saveBtn || !resetBtn) return;
   if (!baseUrlEl || !modelSelectEl || !modelCustomEl || !themeEl || !fontEl || !sizeEl || !statusEl) return;
+  if (!historyModeEl || !historyFormatEl || !historyAutoEl) return;
+  if (!historyFolderRow || !chooseHistoryFolderBtn || !clearHistoryFolderBtn || !historyFolderStatusEl) return;
+  if (!exportHistoryBtn || !historyExportStatusEl) return;
 
   let lastLoaded: Settings | null = null;
 
   const setStatus = (text: string) => {
     statusEl.textContent = text;
+  };
+
+  const setHistoryStatus = (text: string) => {
+    historyExportStatusEl.textContent = text;
+  };
+
+  const refreshHistoryFolderStatus = async () => {
+    const handle = await getHistoryDirectoryHandle();
+    historyFolderStatusEl.textContent = handle ? 'Folder selected.' : 'No folder selected.';
+  };
+
+  const updateHistoryUi = () => {
+    const mode = historyModeEl.value as Settings['historyStorageMode'];
+    historyFolderRow.style.display = mode === 'folder' && supportsFileSystemAccessApi() ? 'flex' : 'none';
   };
 
   const setModelUiMode = (mode: 'select' | 'custom') => {
@@ -1027,6 +1098,34 @@ function setupSettingsModal(onSaved: () => void) {
     themeEl.value = s.theme;
     fontEl.value = s.fontFamily;
     sizeEl.value = String(s.fontSize);
+
+    historyModeEl.value = s.historyStorageMode;
+    historyFormatEl.value = s.historyExportFormat;
+    historyAutoEl.checked = s.historyAutoExportOnSend;
+
+    // If folder picking isn't supported, disable the option and auto-heal to local.
+    const folderSupported = supportsFileSystemAccessApi();
+    const folderOpt = Array.from(historyModeEl.options).find((o) => o.value === 'folder');
+    if (folderOpt) folderOpt.disabled = !folderSupported;
+
+    if (!folderSupported) {
+      historyAutoEl.checked = false;
+      historyAutoEl.disabled = true;
+
+      if (s.historyStorageMode === 'folder') {
+        await setSettings({ historyStorageMode: 'local', historyAutoExportOnSend: false });
+        const healed = await getSettings();
+        historyModeEl.value = healed.historyStorageMode;
+        historyFormatEl.value = healed.historyExportFormat;
+        historyAutoEl.checked = healed.historyAutoExportOnSend;
+      }
+    } else {
+      historyAutoEl.disabled = false;
+    }
+
+    updateHistoryUi();
+    await refreshHistoryFolderStatus();
+    setHistoryStatus('');
   };
 
   const open = async () => {
@@ -1099,6 +1198,77 @@ function setupSettingsModal(onSaved: () => void) {
   // Ensure hidden overlays are not accidentally left visible due to CSS.
   overlay.style.display = overlay.hidden ? 'none' : 'grid';
 
+  historyModeEl.addEventListener('change', () => {
+    updateHistoryUi();
+  });
+
+  chooseHistoryFolderBtn.addEventListener('click', () => {
+    setHistoryStatus('');
+    chooseHistoryFolderBtn.disabled = true;
+    Promise.resolve()
+      .then(async () => {
+        if (!supportsFileSystemAccessApi()) throw new Error(FOLDER_UNAVAILABLE_HINT);
+        const dir = await pickDirectory();
+        await setHistoryDirectoryHandle(dir);
+        await refreshHistoryFolderStatus();
+        setHistoryStatus('Folder selected.');
+      })
+      .catch((e) => setHistoryStatus(errorMessage(e)))
+      .finally(() => {
+        chooseHistoryFolderBtn.disabled = false;
+      });
+  });
+
+  clearHistoryFolderBtn.addEventListener('click', () => {
+    setHistoryStatus('');
+    clearHistoryFolderBtn.disabled = true;
+    Promise.resolve()
+      .then(async () => {
+        await clearHistoryDirectoryHandle();
+        await refreshHistoryFolderStatus();
+        setHistoryStatus('Folder cleared.');
+      })
+      .catch((e) => setHistoryStatus(errorMessage(e)))
+      .finally(() => {
+        clearHistoryFolderBtn.disabled = false;
+      });
+  });
+
+  exportHistoryBtn.addEventListener('click', () => {
+    setHistoryStatus('');
+    exportHistoryBtn.disabled = true;
+
+    Promise.resolve()
+      .then(async () => {
+        const mode = historyModeEl.value as Settings['historyStorageMode'];
+        const format = historyFormatEl.value as Settings['historyExportFormat'];
+        const state = await getState();
+
+        if (mode === 'folder' && supportsFileSystemAccessApi()) {
+          const existing = await getHistoryDirectoryHandle();
+          const dir = existing ?? (await pickDirectory());
+          if (!existing) {
+            await setHistoryDirectoryHandle(dir);
+            await refreshHistoryFolderStatus();
+          }
+          const res = await exportHistoryToDirectory(dir, state, format);
+          setHistoryStatus(`Exported ${res.filesWritten} file(s).`);
+          return;
+        }
+
+        const dl = exportHistoryAsDownload(state, format);
+        setHistoryStatus(
+          mode === 'folder' && !supportsFileSystemAccessApi()
+            ? `Downloaded ${dl.fileName}. (${FOLDER_UNAVAILABLE_HINT})`
+            : `Downloaded ${dl.fileName}.`
+        );
+      })
+      .catch((e) => setHistoryStatus(errorMessage(e)))
+      .finally(() => {
+        exportHistoryBtn.disabled = false;
+      });
+  });
+
   openBtn.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
@@ -1117,6 +1287,7 @@ function setupSettingsModal(onSaved: () => void) {
 
   saveBtn.addEventListener('click', () => {
     setStatus('');
+    setHistoryStatus('');
     saveBtn.disabled = true;
 
     Promise.resolve()
@@ -1127,11 +1298,27 @@ function setupSettingsModal(onSaved: () => void) {
         const fontFamily = fontEl.value as Settings['fontFamily'];
         const fontSize = Number.parseInt(sizeEl.value, 10);
 
+        const historyStorageMode = historyModeEl.value as Settings['historyStorageMode'];
+        const historyExportFormat = historyFormatEl.value as Settings['historyExportFormat'];
+        const historyAutoExportOnSend = historyAutoEl.checked;
+
         if (!baseUrl || !isValidHttpUrl(baseUrl)) throw new Error('Base URL must be http(s)://…');
         if (!model) throw new Error('Default model cannot be empty');
         if (!Number.isFinite(fontSize) || fontSize < 11 || fontSize > 20) throw new Error('Font size must be 11–20');
+        if (historyAutoExportOnSend && historyExportFormat === 'md') {
+          throw new Error('Auto-export is only supported for JSON/JSONL');
+        }
 
-        await setSettings({ baseUrl, model, theme, fontFamily, fontSize });
+        await setSettings({
+          baseUrl,
+          model,
+          theme,
+          fontFamily,
+          fontSize,
+          historyStorageMode,
+          historyExportFormat,
+          historyAutoExportOnSend
+        });
         const s = await getSettings();
         lastLoaded = s;
         applyUiSettings(s);
@@ -1151,6 +1338,7 @@ function setupSettingsModal(onSaved: () => void) {
 
   resetBtn.addEventListener('click', () => {
     setStatus('');
+    setHistoryStatus('');
     resetBtn.disabled = true;
 
     Promise.resolve()
@@ -1166,6 +1354,12 @@ function setupSettingsModal(onSaved: () => void) {
         themeEl.value = s.theme;
         fontEl.value = s.fontFamily;
         sizeEl.value = String(s.fontSize);
+
+        historyModeEl.value = s.historyStorageMode;
+        historyFormatEl.value = s.historyExportFormat;
+        historyAutoEl.checked = s.historyAutoExportOnSend;
+        updateHistoryUi();
+        await refreshHistoryFolderStatus();
         setStatus('Reset.');
       })
       .catch((e) => setStatus(errorMessage(e)))
@@ -1213,6 +1407,25 @@ function buildContextBlock(ctx: TabContext): string {
     '```',
     ''
   ].join('\n');
+}
+
+async function maybeAutoExportHistoryAfterSend(): Promise<void> {
+  try {
+    const s = await getSettings();
+    if (!s.historyAutoExportOnSend) return;
+    if (s.historyStorageMode !== 'folder') return;
+    if (s.historyExportFormat === 'md') return;
+    if (!supportsFileSystemAccessApi()) return;
+
+    const dir = await getHistoryDirectoryHandle();
+    if (!dir) return;
+
+    const state = await getState();
+    await exportHistoryToDirectory(dir, state, s.historyExportFormat);
+  } catch (e) {
+    // Auto-export is best-effort; never block chat on it.
+    console.warn('Auto-export failed', e);
+  }
 }
 
 async function loadModels() {
@@ -1355,6 +1568,7 @@ async function onGenerate() {
     setActiveChatTitleUi();
     renderSidebar();
   } finally {
+    void maybeAutoExportHistoryAfterSend();
     setGenerating(false);
     promptEl.focus();
   }
@@ -1467,12 +1681,17 @@ async function main() {
   renderSidebar();
 
   if (useContextToggle) {
+    const override = getContextEnabledOverrideFromUrl();
+    const enabled = override ?? (await getSavedUseContextEnabled());
+    useContextToggle.checked = enabled;
+    setContextBadge(enabled ? 'Context on' : 'Context off', enabled);
+    if (override != null) void setSavedUseContextEnabled(enabled);
+
     useContextToggle.addEventListener('change', () => {
-      const enabled = useContextToggle.checked;
-      setContextBadge(enabled ? 'Context on' : 'Context off', enabled);
+      const next = useContextToggle.checked;
+      void setSavedUseContextEnabled(next);
+      setContextBadge(next ? 'Context on' : 'Context off', next);
     });
-    // Default off
-    setContextBadge('Context off', false);
   }
 
   try {

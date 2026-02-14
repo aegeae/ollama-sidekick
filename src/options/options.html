@@ -49,6 +49,47 @@
         <input id="fontSize" type="number" min="11" max="20" step="1" />
       </label>
 
+      <h2>Conversation history</h2>
+      <p class="hint">
+        Chats are stored locally in your browser. You can also export a copy to disk.
+      </p>
+
+      <label class="label">
+        Storage
+        <select id="historyStorageMode">
+          <option value="local">Local (browser storage)</option>
+          <option value="folder">Folder (export)</option>
+        </select>
+      </label>
+
+      <label class="label">
+        Export format
+        <select id="historyExportFormat">
+          <option value="json">JSON (single file)</option>
+          <option value="jsonl">JSONL (single file)</option>
+          <option value="md">Markdown</option>
+        </select>
+      </label>
+
+      <label class="label">
+        <span>Auto-export on send</span>
+        <label class="row rowTight">
+          <input id="historyAutoExportOnSend" type="checkbox" />
+          <span class="hint hintInline">Only for JSON/JSONL, and only after a folder is chosen.</span>
+        </label>
+      </label>
+
+      <div id="historyFolderRow" class="row">
+        <button id="chooseHistoryFolderBtn" type="button">Choose folder…</button>
+        <button id="clearHistoryFolderBtn" type="button">Clear</button>
+        <span id="historyFolderStatus" class="status"></span>
+      </div>
+
+      <div class="row">
+        <button id="exportHistoryBtn" type="button">Export now</button>
+        <span id="historyExportStatus" class="status"></span>
+      </div>
+
       <div class="row">
         <button id="saveBtn">Save</button>
         <span id="status" class="status"></span>

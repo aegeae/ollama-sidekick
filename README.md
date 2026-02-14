@@ -80,6 +80,16 @@ Notes / limitations:
 - Use the left sidebar to create chats, search, and organize chats into folders.
 - Use **Rename** / **Delete** in the header for the active chat.
 
+### Chat history export (folder / formats)
+
+- In **Settings**, you can choose how to export chat history:
+  - **Local (browser storage)** — default (current behavior)
+  - **Folder (export)** — pick a folder and export history to disk in JSON / JSONL / Markdown
+- Folder export uses the browser’s File System Access API when available; otherwise it falls back to downloading a file.
+- Note: the extension still keeps chat history in browser storage; folder export is an additional copy on disk.
+
+Note: some browsers display the save prompt origin as `chrome-extension://<id>` (especially for unpacked extensions). That label is controlled by the browser UI and isn’t something the extension can override.
+
 ### Context menu
 
 - Select text on a page → right click → **Ask Ollama about selection**

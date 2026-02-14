@@ -4,6 +4,9 @@ export type Settings = {
   theme: 'system' | 'dark' | 'light';
   fontFamily: 'system' | 'sans' | 'serif' | 'mono' | 'jetbrainsMono';
   fontSize: number;
+  historyStorageMode: 'local' | 'folder';
+  historyExportFormat: 'json' | 'md' | 'jsonl';
+  historyAutoExportOnSend: boolean;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -11,7 +14,10 @@ export const DEFAULT_SETTINGS: Settings = {
   model: '',
   theme: 'system',
   fontFamily: 'jetbrainsMono',
-  fontSize: 13
+  fontSize: 13,
+  historyStorageMode: 'local',
+  historyExportFormat: 'json',
+  historyAutoExportOnSend: false
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -51,7 +57,16 @@ function normalizeAndValidateBaseUrl(value: string): string {
 }
 
 export async function getSettings(): Promise<Settings> {
-  const data = await chrome.storage.local.get(['baseUrl', 'model', 'theme', 'fontFamily', 'fontSize']);
+  const data = await chrome.storage.local.get([
+    'baseUrl',
+    'model',
+    'theme',
+    'fontFamily',
+    'fontSize',
+    'historyStorageMode',
+    'historyExportFormat',
+    'historyAutoExportOnSend'
+  ]);
 
   const theme = data.theme === 'dark' || data.theme === 'light' || data.theme === 'system' ? data.theme : null;
   const fontFamily =
@@ -65,6 +80,14 @@ export async function getSettings(): Promise<Settings> {
 
   const fontSizeRaw = typeof data.fontSize === 'number' ? data.fontSize : null;
   const fontSize = fontSizeRaw == null ? null : clamp(Math.round(fontSizeRaw), 11, 20);
+
+  const historyStorageMode = data.historyStorageMode === 'local' || data.historyStorageMode === 'folder' ? data.historyStorageMode : null;
+  const historyExportFormat =
+    data.historyExportFormat === 'json' || data.historyExportFormat === 'md' || data.historyExportFormat === 'jsonl'
+      ? data.historyExportFormat
+      : null;
+
+  const historyAutoExportOnSend = typeof data.historyAutoExportOnSend === 'boolean' ? data.historyAutoExportOnSend : null;
 
   let baseUrl = DEFAULT_SETTINGS.baseUrl;
   if (typeof data.baseUrl === 'string' && data.baseUrl.length > 0) {
@@ -80,7 +103,10 @@ export async function getSettings(): Promise<Settings> {
     model: typeof data.model === 'string' && data.model.trim().length > 0 ? data.model.trim() : DEFAULT_SETTINGS.model,
     theme: theme ?? DEFAULT_SETTINGS.theme,
     fontFamily: fontFamily ?? DEFAULT_SETTINGS.fontFamily,
-    fontSize: fontSize ?? DEFAULT_SETTINGS.fontSize
+    fontSize: fontSize ?? DEFAULT_SETTINGS.fontSize,
+    historyStorageMode: historyStorageMode ?? DEFAULT_SETTINGS.historyStorageMode,
+    historyExportFormat: historyExportFormat ?? DEFAULT_SETTINGS.historyExportFormat,
+    historyAutoExportOnSend: historyAutoExportOnSend ?? DEFAULT_SETTINGS.historyAutoExportOnSend
   };
 }
 
@@ -89,5 +115,24 @@ export async function setSettings(partial: Partial<Settings>): Promise<void> {
   if (typeof patch.baseUrl === 'string') {
     patch.baseUrl = normalizeAndValidateBaseUrl(patch.baseUrl);
   }
+
+  if (patch.historyStorageMode != null) {
+    if (patch.historyStorageMode !== 'local' && patch.historyStorageMode !== 'folder') {
+      throw new Error('Invalid history storage mode');
+    }
+  }
+
+  if (patch.historyExportFormat != null) {
+    if (patch.historyExportFormat !== 'json' && patch.historyExportFormat !== 'md' && patch.historyExportFormat !== 'jsonl') {
+      throw new Error('Invalid history export format');
+    }
+  }
+
+  if (patch.historyAutoExportOnSend != null) {
+    if (typeof patch.historyAutoExportOnSend !== 'boolean') {
+      throw new Error('Invalid history auto-export setting');
+    }
+  }
+
   await chrome.storage.local.set(patch);
 }

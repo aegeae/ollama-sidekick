@@ -6,7 +6,6 @@ export type Settings = {
   fontSize: number;
   historyStorageMode: 'local' | 'folder';
   historyExportFormat: 'json' | 'md' | 'jsonl';
-  historyAutoExportOnSend: boolean;
   alwaysOpenPopout: boolean;
 };
 
@@ -18,8 +17,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontSize: 13,
   historyStorageMode: 'local',
   historyExportFormat: 'json',
-  historyAutoExportOnSend: false,
-  alwaysOpenPopout: false
+  alwaysOpenPopout: true
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -77,8 +75,6 @@ export function coerceSettingsFromStorage(data: Record<string, unknown>): Settin
     data.historyExportFormat === 'json' || data.historyExportFormat === 'md' || data.historyExportFormat === 'jsonl'
       ? data.historyExportFormat
       : null;
-
-  const historyAutoExportOnSend = typeof data.historyAutoExportOnSend === 'boolean' ? data.historyAutoExportOnSend : null;
   const alwaysOpenPopout = typeof data.alwaysOpenPopout === 'boolean' ? data.alwaysOpenPopout : null;
 
   let baseUrl = DEFAULT_SETTINGS.baseUrl;
@@ -98,7 +94,6 @@ export function coerceSettingsFromStorage(data: Record<string, unknown>): Settin
     fontSize: fontSize ?? DEFAULT_SETTINGS.fontSize,
     historyStorageMode: historyStorageMode ?? DEFAULT_SETTINGS.historyStorageMode,
     historyExportFormat: historyExportFormat ?? DEFAULT_SETTINGS.historyExportFormat,
-    historyAutoExportOnSend: historyAutoExportOnSend ?? DEFAULT_SETTINGS.historyAutoExportOnSend,
     alwaysOpenPopout: alwaysOpenPopout ?? DEFAULT_SETTINGS.alwaysOpenPopout
   };
 }
@@ -119,12 +114,6 @@ export function validateSettingsPatch(partial: Partial<Settings>): Partial<Setti
   if (patch.historyExportFormat != null) {
     if (patch.historyExportFormat !== 'json' && patch.historyExportFormat !== 'md' && patch.historyExportFormat !== 'jsonl') {
       throw new Error('Invalid history export format');
-    }
-  }
-
-  if (patch.historyAutoExportOnSend != null) {
-    if (typeof patch.historyAutoExportOnSend !== 'boolean') {
-      throw new Error('Invalid history auto-export setting');
     }
   }
 

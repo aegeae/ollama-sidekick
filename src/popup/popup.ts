@@ -1272,7 +1272,6 @@ function setupSettingsModal(onSaved: () => void) {
 
   const historyModeEl = document.getElementById('settingsHistoryStorageMode') as HTMLSelectElement | null;
   const historyFormatEl = document.getElementById('settingsHistoryExportFormat') as HTMLSelectElement | null;
-  const historyAutoEl = document.getElementById('settingsHistoryAutoExportOnSend') as HTMLInputElement | null;
   const historyFolderRow = document.getElementById('settingsHistoryFolderRow') as HTMLDivElement | null;
   const chooseHistoryFolderBtn = document.getElementById('settingsChooseHistoryFolderBtn') as HTMLButtonElement | null;
   const clearHistoryFolderBtn = document.getElementById('settingsClearHistoryFolderBtn') as HTMLButtonElement | null;
@@ -1282,7 +1281,7 @@ function setupSettingsModal(onSaved: () => void) {
 
   if (!overlay || !openBtn || !closeBtn || !cancelBtn || !saveBtn || !resetBtn) return;
   if (!baseUrlEl || !modelSelectEl || !modelCustomEl || !themeEl || !fontEl || !sizeEl || !alwaysOpenPopoutEl || !statusEl) return;
-  if (!historyModeEl || !historyFormatEl || !historyAutoEl) return;
+  if (!historyModeEl || !historyFormatEl) return;
   if (!historyFolderRow || !chooseHistoryFolderBtn || !clearHistoryFolderBtn || !historyFolderStatusEl) return;
   if (!exportHistoryBtn || !historyExportStatusEl) return;
 
@@ -1371,7 +1370,6 @@ function setupSettingsModal(onSaved: () => void) {
 
     historyModeEl.value = s.historyStorageMode;
     historyFormatEl.value = s.historyExportFormat;
-    historyAutoEl.checked = s.historyAutoExportOnSend;
 
     // If folder picking isn't supported, disable the option and auto-heal to local.
     const folderSupported = supportsFileSystemAccessApi();
@@ -1379,18 +1377,12 @@ function setupSettingsModal(onSaved: () => void) {
     if (folderOpt) folderOpt.disabled = !folderSupported;
 
     if (!folderSupported) {
-      historyAutoEl.checked = false;
-      historyAutoEl.disabled = true;
-
       if (s.historyStorageMode === 'folder') {
-        await setSettings({ historyStorageMode: 'local', historyAutoExportOnSend: false });
+        await setSettings({ historyStorageMode: 'local' });
         const healed = await getSettings();
         historyModeEl.value = healed.historyStorageMode;
         historyFormatEl.value = healed.historyExportFormat;
-        historyAutoEl.checked = healed.historyAutoExportOnSend;
       }
-    } else {
-      historyAutoEl.disabled = false;
     }
 
     updateHistoryUi();
@@ -1571,14 +1563,10 @@ function setupSettingsModal(onSaved: () => void) {
 
         const historyStorageMode = historyModeEl.value as Settings['historyStorageMode'];
         const historyExportFormat = historyFormatEl.value as Settings['historyExportFormat'];
-        const historyAutoExportOnSend = historyAutoEl.checked;
 
         if (!baseUrl || !isValidHttpUrl(baseUrl)) throw new Error('Base URL must be http(s)://…');
         if (!model) throw new Error('Default model cannot be empty');
         if (!Number.isFinite(fontSize) || fontSize < 11 || fontSize > 20) throw new Error('Font size must be 11–20');
-        if (historyAutoExportOnSend && historyExportFormat === 'md') {
-          throw new Error('Auto-export is only supported for JSON/JSONL');
-        }
 
         await setSettings({
           baseUrl,
@@ -1588,8 +1576,7 @@ function setupSettingsModal(onSaved: () => void) {
           fontSize,
           alwaysOpenPopout,
           historyStorageMode,
-          historyExportFormat,
-          historyAutoExportOnSend
+          historyExportFormat
         });
         const s = await getSettings();
         lastLoaded = s;
@@ -1630,7 +1617,6 @@ function setupSettingsModal(onSaved: () => void) {
 
         historyModeEl.value = s.historyStorageMode;
         historyFormatEl.value = s.historyExportFormat;
-        historyAutoEl.checked = s.historyAutoExportOnSend;
         updateHistoryUi();
         await refreshHistoryFolderStatus();
         setStatus('Reset.');
@@ -1680,25 +1666,6 @@ async function getTabContext(maxChars = 8000): Promise<TabContext> {
   if (!resp.ok) throw new Error(formatError(resp));
   if (resp.type !== 'TAB_CONTEXT_GET_RESULT') throw new Error('Unexpected response while reading tab context');
   return resp.context;
-}
-
-async function maybeAutoExportHistoryAfterSend(): Promise<void> {
-  try {
-    const s = await getSettings();
-    if (!s.historyAutoExportOnSend) return;
-    if (s.historyStorageMode !== 'folder') return;
-    if (s.historyExportFormat === 'md') return;
-    if (!supportsFileSystemAccessApi()) return;
-
-    const dir = await getHistoryDirectoryHandle();
-    if (!dir) return;
-
-    const state = await getState();
-    await exportHistoryToDirectory(dir, state, s.historyExportFormat);
-  } catch (e) {
-    // Auto-export is best-effort; never block chat on it.
-    console.warn('Auto-export failed', e);
-  }
 }
 
 async function loadModels() {
@@ -1834,7 +1801,6 @@ async function onGenerate() {
     setActiveChatTitleUi();
     renderSidebar();
   } finally {
-    void maybeAutoExportHistoryAfterSend();
     setGenerating(false);
     promptEl.focus();
   }

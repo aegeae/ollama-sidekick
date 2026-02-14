@@ -52,7 +52,6 @@ async function load() {
 
   ($('historyStorageMode') as HTMLSelectElement).value = fresh.historyStorageMode;
   ($('historyExportFormat') as HTMLSelectElement).value = fresh.historyExportFormat;
-  ($('historyAutoExportOnSend') as HTMLInputElement).checked = fresh.historyAutoExportOnSend;
 
   const storageModeEl = $('historyStorageMode') as HTMLSelectElement;
   const folderOpt = Array.from(storageModeEl.options).find((o) => o.value === 'folder');
@@ -60,16 +59,11 @@ async function load() {
   if (folderOpt) folderOpt.disabled = !folderSupported;
 
   if (!folderSupported) {
-    const autoEl = $('historyAutoExportOnSend') as HTMLInputElement;
-    autoEl.checked = false;
-    autoEl.disabled = true;
-
     // If user had folder mode stored from a different browser, auto-heal back to local.
     if (fresh.historyStorageMode === 'folder') {
-      await setSettings({ historyStorageMode: 'local', historyAutoExportOnSend: false });
+      await setSettings({ historyStorageMode: 'local' });
       const healed = await getSettings();
       storageModeEl.value = healed.historyStorageMode;
-      ($('historyAutoExportOnSend') as HTMLInputElement).checked = healed.historyAutoExportOnSend;
     }
 
     // Hide folder controls when unsupported.
@@ -143,11 +137,6 @@ async function save() {
 
   const historyStorageMode = ($('historyStorageMode') as HTMLSelectElement).value as Settings['historyStorageMode'];
   const historyExportFormat = ($('historyExportFormat') as HTMLSelectElement).value as Settings['historyExportFormat'];
-  const historyAutoExportOnSend = ($('historyAutoExportOnSend') as HTMLInputElement).checked;
-
-  if (historyAutoExportOnSend && historyExportFormat === 'md') {
-    throw new Error('Auto-export on send is only supported for JSON/JSONL');
-  }
 
   await setSettings({
     baseUrl,
@@ -157,8 +146,7 @@ async function save() {
     fontSize,
     alwaysOpenPopout,
     historyStorageMode,
-    historyExportFormat,
-    historyAutoExportOnSend
+    historyExportFormat
   });
   applyUiSettings(await getSettings());
 }

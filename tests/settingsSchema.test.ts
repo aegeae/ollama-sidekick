@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 
 import { coerceSettingsFromStorage, validateSettingsPatch } from '../src/lib/settingsSchema.js';
 
-test('coerceSettingsFromStorage defaults alwaysOpenPopout to false', () => {
+test('coerceSettingsFromStorage defaults alwaysOpenPopout to true', () => {
   const s = coerceSettingsFromStorage({});
-  assert.equal(s.alwaysOpenPopout, false);
+  assert.equal(s.alwaysOpenPopout, true);
 });
 
 test('coerceSettingsFromStorage preserves alwaysOpenPopout when boolean', () => {

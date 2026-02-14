@@ -50,15 +50,15 @@ For Chrome Web Store packaging:
 
 ## Use
 
-- Click the extension icon → popup
+- Click the extension icon → pop-out window (default)
 - If model list fails to load, confirm Ollama is reachable at `http://localhost:11434`
 - Configure base URL / default model via **Settings** (in the popup)
 
 ### Popup resize / move
 
 - The extension action popup is controlled by the browser UI, so it cannot be freely dragged to a different location.
-- Use **Pop out** to open a movable + resizable chat window.
-- **Pop in** closes the pop-out window. Reopen the toolbar popup by clicking the extension icon.
+- Use **Pop out** to open a movable + resizable chat window (this is the default behavior).
+- **Pop in** closes the pop-out window. You can disable auto pop-out in **Settings** if you prefer the toolbar popup.
 
 ### Use current tab as context
 

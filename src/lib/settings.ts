@@ -12,7 +12,6 @@ export async function getSettings(): Promise<Settings> {
     'fontSize',
     'historyStorageMode',
     'historyExportFormat',
-    'historyAutoExportOnSend',
     'alwaysOpenPopout'
   ]);
 

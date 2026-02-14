@@ -6,6 +6,7 @@
   "scripts": {
     "clean": "rimraf dist .vite",
     "dev": "vite build --watch",
+    "gen:icons": "node scripts/gen-icons.mjs",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -13,6 +14,7 @@
     "@types/chrome": "^0.0.268",
     "@types/node": "^22.13.1",
     "rimraf": "^6.0.1",
+    "sharp": "^0.33.5",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
     "vite-plugin-static-copy": "^3.2.0"

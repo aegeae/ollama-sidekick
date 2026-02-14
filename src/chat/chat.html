@@ -4,29 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ollama Sidekick</title>
-    <link rel="stylesheet" href="./popup.css" />
+    <link rel="stylesheet" href="./chat.css" />
   </head>
   <body>
     <main class="app">
       <header class="topbar">
-        <div class="title">
-          Ollama Sidekick
-          <span id="contextBadge" class="badge" hidden>Context off</span>
-        </div>
-
+        <div class="title">Ollama Sidekick</div>
         <div class="controls">
           <select id="modelSelect" class="model" aria-label="Model"></select>
-
-          <label class="toggle" title="Use current page as context">
-            <input id="useContextToggle" type="checkbox" />
-            <span class="toggleUi" aria-hidden="true"></span>
-            <span class="toggleLabel">Context</span>
-          </label>
-
-          <button id="insertSelectionBtn" class="miniBtn" type="button" title="Insert selected text">
-            Insert
-          </button>
-
           <a class="iconLink" href="../options/options.html" target="_blank" rel="noreferrer" aria-label="Options" title="Options">
             Options
           </a>
@@ -36,18 +21,13 @@
       <section id="chat" class="chat" aria-label="Chat"></section>
 
       <footer class="composer">
-        <textarea
-          id="prompt"
-          class="prompt"
-          rows="1"
-          placeholder="Ask Ollama… (Enter to send, Shift+Enter for newline)"
-        ></textarea>
+        <textarea id="prompt" class="prompt" rows="1" placeholder="Ask Ollama…"></textarea>
         <button id="generateBtn" class="send" type="button" aria-label="Send" title="Send"></button>
       </footer>
 
       <div id="output" class="srOnly" aria-live="polite"></div>
     </main>
 
-    <script type="module" src="./popup.ts"></script>
+    <script type="module" src="./chat.ts"></script>
   </body>
 </html>

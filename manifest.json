@@ -1,15 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "Brave Ollama Extension",
+  "name": "Ollama Sidekick",
+  "short_name": "Sidekick",
   "version": "0.1.0",
-  "description": "A Brave/Chrome extension that talks to local Ollama models.",
-  "permissions": ["storage"],
+  "description": "Chat with local Ollama models, optionally using the current page as context.",
+  "permissions": ["storage", "activeTab", "scripting", "contextMenus"],
   "host_permissions": [
     "http://localhost:11434/*",
     "http://127.0.0.1:11434/*"
   ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_title": "Ollama",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
     "default_popup": "src/popup/popup.html"
   },
   "options_page": "src/options/options.html",

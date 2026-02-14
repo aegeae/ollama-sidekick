@@ -1,0 +1,10 @@
+@import url("../popup/popup.css");
+
+/* In a tab, fill the viewport instead of a fixed popup height */
+.app {
+  height: 100vh;
+}
+
+body {
+  min-width: 0;
+}

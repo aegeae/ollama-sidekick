@@ -1,6 +1,11 @@
-# brave-ollama-extension
+# Ollama Sidekick
 
-A minimal Brave/Chrome (Manifest V3) extension that calls local Ollama.
+A minimal Brave/Chrome (Manifest V3) extension that chats with local Ollama.
+
+## Branding
+
+- Name: **Ollama Sidekick**
+- Icons: `public/icons/` (generated from an original SVG via `npm run gen:icons`)
 
 ## Prereqs
 
@@ -35,6 +40,20 @@ This produces `dist/` which you can load as an unpacked extension.
 - If model list fails to load, confirm Ollama is reachable at `http://localhost:11434`
 - Configure base URL / default model via **Options**
 
+### Use current tab as context
+
+In the popup:
+
+- Toggle **Context** to allow using the current tab’s selection/page text as extra prompt context.
+- Click **Insert** to insert your current selection (or an excerpt) into the composer.
+
+Nothing is persisted by default; context is only extracted on user action.
+
+### Context menu
+
+- Select text on a page → right click → **Ask Ollama about selection**
+- This opens an extension chat tab prefilled with the selection and auto-sends it.
+
 ## Dev loop
 
 - Run `npm run dev` (watch rebuild)
@@ -46,6 +65,12 @@ This produces `dist/` which you can load as an unpacked extension.
   - `http://localhost:11434/*`
   - `http://127.0.0.1:11434/*`
 - If you use a different port or hostname, update Options (and manifest host permissions accordingly).
+
+### Permissions
+
+- `storage` — save base URL + default model
+- `activeTab` + `scripting` — extract current page selection/excerpt on-demand when you use Context/Insert
+- `contextMenus` — adds “Ask Ollama about selection”
 
 ### HTTP 403 Forbidden
 

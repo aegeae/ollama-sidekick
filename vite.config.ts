@@ -14,7 +14,8 @@ export default defineConfig({
       targets: [
         { src: 'manifest.json', dest: '.' },
         { src: 'src/popup/popup.css', dest: 'src/popup' },
-        { src: 'src/options/options.css', dest: 'src/options' }
+        { src: 'src/options/options.css', dest: 'src/options' },
+        { src: 'src/chat/chat.css', dest: 'src/chat' }
       ]
     })
   ],
@@ -26,11 +27,14 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'src/popup/popup.html'),
         options: resolve(__dirname, 'src/options/options.html'),
+        chat: resolve(__dirname, 'src/chat/chat.html'),
+        contentScript: resolve(__dirname, 'src/content/contentScript.ts'),
         background: resolve(__dirname, 'src/background/serviceWorker.ts')
       },
       output: {
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === 'background') return 'background.js';
+          if (chunkInfo.name === 'contentScript') return 'contentScript.js';
           return 'assets/[name]-[hash].js';
         },
         chunkFileNames: 'assets/chunks/[name]-[hash].js',

@@ -20,19 +20,13 @@ function formatError(resp: Extract<BackgroundResponse, { ok: false }>): string {
 }
 
 type ChatRole = 'user' | 'assistant' | 'system' | 'error';
+
 type ChatMessage = {
   id: string;
   role: ChatRole;
   text: string;
   ts: number;
   pending?: boolean;
-};
-
-type TabContext = {
-  title: string;
-  url: string;
-  selection: string;
-  textExcerpt: string;
 };
 
 const state: { messages: ChatMessage[]; generating: boolean } = {
@@ -50,8 +44,6 @@ function scrollChatToBottom() {
 }
 
 function renderMessageText(container: HTMLElement, text: string) {
-  // Simple fenced-code handling without a markdown parser.
-  // Split by ``` and alternate between plain and code blocks.
   const parts = text.split('```');
   for (let i = 0; i < parts.length; i++) {
     const segment = parts[i];
@@ -109,78 +101,29 @@ function setGenerating(isGenerating: boolean) {
   state.generating = isGenerating;
   const btn = $('generateBtn') as HTMLButtonElement;
   const prompt = $('prompt') as HTMLTextAreaElement;
-  const insertBtn = document.getElementById('insertSelectionBtn') as HTMLButtonElement | null;
   btn.disabled = isGenerating;
   prompt.disabled = isGenerating;
-  if (insertBtn) insertBtn.disabled = isGenerating;
   btn.classList.toggle('isLoading', isGenerating);
 }
 
 function autoGrowTextarea(el: HTMLTextAreaElement) {
   el.style.height = 'auto';
-  const max = 160; // px
+  const max = 220;
   el.style.height = `${Math.min(el.scrollHeight, max)}px`;
-}
-
-function setContextBadge(text: string, visible: boolean) {
-  const badge = document.getElementById('contextBadge') as HTMLSpanElement | null;
-  if (!badge) return;
-  badge.hidden = !visible;
-  badge.textContent = text;
-}
-
-async function getTabContext(maxChars = 8000): Promise<TabContext> {
-  const resp = await sendMessage({ type: 'TAB_CONTEXT_GET', maxChars });
-  if (!resp.ok) throw new Error(formatError(resp));
-  if (resp.type !== 'TAB_CONTEXT_GET_RESULT') throw new Error('Unexpected response while reading tab context');
-  return resp.context;
-}
-
-function buildContextBlock(ctx: TabContext): string {
-  const selection = ctx.selection?.trim();
-  const excerpt = ctx.textExcerpt?.trim();
-  const body = selection || excerpt || '';
-  const clipped = body.length > 2000 ? body.slice(0, 2000) + '…' : body;
-
-  return [
-    'Context (current tab):',
-    `Title: ${ctx.title}`,
-    `URL: ${ctx.url}`,
-    '',
-    '```',
-    clipped,
-    '```',
-    ''
-  ].join('\n');
-}
-
-function insertAtCursor(textarea: HTMLTextAreaElement, text: string) {
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? textarea.value.length;
-  const before = textarea.value.slice(0, start);
-  const after = textarea.value.slice(end);
-  textarea.value = before + text + after;
-  const newPos = start + text.length;
-  textarea.selectionStart = textarea.selectionEnd = newPos;
 }
 
 async function loadModels() {
   const modelSelect = $('modelSelect') as HTMLSelectElement;
   modelSelect.innerHTML = '';
-
   const settings = await getSettings();
 
   try {
     const resp = await sendMessage({ type: 'OLLAMA_LIST_MODELS' });
     if (!resp.ok) throw new Error(formatError(resp));
-
-    if (resp.type !== 'OLLAMA_LIST_MODELS_RESULT') {
-      throw new Error('Unexpected response while listing models');
-    }
+    if (resp.type !== 'OLLAMA_LIST_MODELS_RESULT') throw new Error('Unexpected response while listing models');
 
     const models = resp.models;
     if (models.length === 0) {
-      // Ollama reachable but no models returned; still allow generation if user knows the model name.
       const opt = document.createElement('option');
       opt.value = settings.model;
       opt.textContent = settings.model;
@@ -195,11 +138,9 @@ async function loadModels() {
       modelSelect.appendChild(opt);
     }
 
-    // Auto-select saved default model if it exists in the list.
     const defaultIndex = models.findIndex((m) => m === settings.model);
     if (defaultIndex >= 0) modelSelect.selectedIndex = defaultIndex;
   } catch {
-    // If listing fails (e.g. Ollama down), still provide a reasonable default.
     const opt = document.createElement('option');
     opt.value = settings.model;
     opt.textContent = settings.model;
@@ -207,62 +148,42 @@ async function loadModels() {
   }
 }
 
+function getQueryPrompt(): { prompt: string; auto: boolean } {
+  const url = new URL(location.href);
+  return {
+    prompt: url.searchParams.get('prompt') ?? '',
+    auto: url.searchParams.get('auto') === '1'
+  };
+}
+
 async function onGenerate() {
   if (state.generating) return;
 
   const promptEl = $('prompt') as HTMLTextAreaElement;
-  const prompt = promptEl.value;
+  const prompt = promptEl.value.trim();
   const model = ($('modelSelect') as HTMLSelectElement).value;
-
-  const useContext = (document.getElementById('useContextToggle') as HTMLInputElement | null)?.checked ?? false;
-
-  const trimmed = prompt.trim();
-  if (!trimmed) return;
+  if (!prompt) return;
 
   promptEl.value = '';
   autoGrowTextarea(promptEl);
 
-  addMessage('user', trimmed);
+  addMessage('user', prompt);
   const thinkingId = addMessage('assistant', 'Thinking…', true);
   setGenerating(true);
 
   try {
-    let finalPrompt = trimmed;
-    if (useContext) {
-      try {
-        const ctx = await getTabContext(8000);
-        finalPrompt = buildContextBlock(ctx) + trimmed;
-        setContextBadge('Context attached', true);
-        // After a moment, revert badge text but keep visible while enabled.
-        setTimeout(() => {
-          const stillEnabled =
-            (document.getElementById('useContextToggle') as HTMLInputElement | null)?.checked ?? false;
-          setContextBadge(stillEnabled ? 'Context on' : 'Context off', stillEnabled);
-        }, 1500);
-      } catch (e) {
-        // Context is optional; show a system message and continue without it.
-        addMessage('system', `Context not attached: ${String((e as any)?.message ?? e)}`);
-      }
-    }
-
-    const resp = await sendMessage({ type: 'OLLAMA_GENERATE', prompt: finalPrompt, model });
+    const resp = await sendMessage({ type: 'OLLAMA_GENERATE', prompt, model });
     if (!resp.ok) {
       updateMessage(thinkingId, { role: 'error', text: formatError(resp), pending: false });
       return;
     }
-
     if (resp.type !== 'OLLAMA_GENERATE_RESULT') {
       updateMessage(thinkingId, { role: 'error', text: 'Unexpected response while generating', pending: false });
       return;
     }
-
     updateMessage(thinkingId, { text: resp.text || '(empty response)', pending: false });
   } catch (e) {
-    updateMessage(thinkingId, {
-      role: 'error',
-      text: String((e as any)?.message ?? e),
-      pending: false
-    });
+    updateMessage(thinkingId, { role: 'error', text: String((e as any)?.message ?? e), pending: false });
   } finally {
     setGenerating(false);
     promptEl.focus();
@@ -272,11 +193,8 @@ async function onGenerate() {
 async function main() {
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
-  const useContextToggle = document.getElementById('useContextToggle') as HTMLInputElement | null;
-  const insertBtn = document.getElementById('insertSelectionBtn') as HTMLButtonElement | null;
 
   btn.addEventListener('click', () => void onGenerate());
-
   promptEl.addEventListener('input', () => autoGrowTextarea(promptEl));
   promptEl.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && !ev.shiftKey) {
@@ -287,38 +205,15 @@ async function main() {
 
   autoGrowTextarea(promptEl);
   setGenerating(false);
-
   addMessage('system', 'Ready.');
 
-  if (useContextToggle) {
-    useContextToggle.addEventListener('change', () => {
-      const enabled = useContextToggle.checked;
-      setContextBadge(enabled ? 'Context on' : 'Context off', enabled);
-    });
-    // Default off
-    setContextBadge('Context off', false);
-  }
+  await loadModels();
 
-  if (insertBtn) {
-    insertBtn.addEventListener('click', () => {
-      Promise.resolve()
-        .then(() => getTabContext(8000))
-        .then((ctx) => {
-          const text = (ctx.selection || ctx.textExcerpt || '').trim();
-          if (!text) throw new Error('No selection or page text available');
-          const toInsert = text.length > 2000 ? text.slice(0, 2000) + '…' : text;
-          insertAtCursor(promptEl, (promptEl.value ? '\n\n' : '') + toInsert);
-          autoGrowTextarea(promptEl);
-          promptEl.focus();
-        })
-        .catch((e) => addMessage('error', String((e as any)?.message ?? e)));
-    });
-  }
-
-  try {
-    await loadModels();
-  } catch (e) {
-    addMessage('error', `Failed to load models. Is Ollama running?\n${String((e as any)?.message ?? e)}`);
+  const qp = getQueryPrompt();
+  if (qp.prompt) {
+    promptEl.value = qp.prompt;
+    autoGrowTextarea(promptEl);
+    if (qp.auto) void onGenerate();
   }
 }
 

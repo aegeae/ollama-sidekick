@@ -80,6 +80,18 @@ Nothing is persisted by default; context is only extracted on user action.
 
 - `npm run release:patch` (or `release:minor` / `release:major`) bumps versions in `package.json` + `manifest.json` and then builds.
 
+### Protected `main` auto-release
+
+This repo treats `main` as a protected release branch. On each push/merge to `main`, GitHub Actions will:
+
+- Compute a SemVer bump from Conventional Commit messages (`feat`/`fix`/breaking)
+- Bump `package.json` + `manifest.json`
+- Create and push a tag `vX.Y.Z`
+
+The tag push then triggers the existing tag-based release workflow to build and upload `ollama-sidekick.zip`.
+
+Details and required GitHub settings (branch protection + allowing Actions to push) are in [docs/RELEASING.md](docs/RELEASING.md).
+
 ### GitHub Release (tag)
 
 - Create a tag like `v0.1.0` and push it; GitHub Actions will attach `ollama-sidekick.zip` to a GitHub Release.

@@ -1,0 +1,117 @@
+name: Auto Release (main)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release-main
+  cancel-in-progress: false
+
+jobs:
+  bump_tag:
+    runs-on: ubuntu-latest
+    if: |
+      !startsWith(github.event.head_commit.message, 'chore(release):') &&
+      !contains(github.event.head_commit.message, '[skip ci]')
+
+    steps:
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect .nvmrc
+        id: nvm
+        shell: bash
+        run: |
+          if [ -f .nvmrc ]; then
+            echo "has_nvmrc=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_nvmrc=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js (.nvmrc)
+        if: steps.nvm.outputs.has_nvmrc == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Node.js (20)
+        if: steps.nvm.outputs.has_nvmrc != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Compute next version
+        id: next
+        run: node scripts/next-version.mjs --github-output
+
+      - name: No bump needed
+        if: steps.next.outputs.bump == 'none'
+        run: echo "No version bump needed; exiting."
+
+      - name: Check if tag already exists
+        id: tagcheck
+        if: steps.next.outputs.bump != 'none'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.next.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists; skipping."
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Apply version to package + manifest
+        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
+        run: node scripts/apply-version.mjs "${{ steps.next.outputs.version }}" --manifest manifest.json
+
+      - name: Commit release bump
+        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ -z "$(git status --porcelain=v1)" ]; then
+            echo "No changes to commit; exiting."
+            exit 0
+          fi
+
+          VERSION="${{ steps.next.outputs.version }}"
+          git add package.json manifest.json package-lock.json || true
+          git commit -m "chore(release): v$VERSION [skip ci]"
+
+      - name: Create annotated tag
+        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.next.outputs.tag }}"
+          git tag -a "$TAG" -m "$TAG"
+
+      - name: Push commit + tag
+        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:main
+          git push origin "${{ steps.next.outputs.tag }}"
+
+      - name: Summary
+        if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'
+        run: |
+          echo "Released ${{ steps.next.outputs.tag }} (bump: ${{ steps.next.outputs.bump }})"
+          echo "GitHub Release + zip will be created by .github/workflows/release.yml on tag push."

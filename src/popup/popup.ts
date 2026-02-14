@@ -29,6 +29,7 @@ import {
   pickDirectory,
   supportsFileSystemAccessApi
 } from '../lib/historyExportFs';
+import { computeSidebarWidthExpanded } from '../lib/sidebarResizeMath';
 
 const FOLDER_UNAVAILABLE_HINT =
   'Folder picker is not available in this browser. Use Export now (download), and enable “Ask where to save each file” in browser download settings if you want to pick a folder.';
@@ -479,10 +480,24 @@ function getActiveChatTitle(): string {
   return c?.title ?? 'Chat';
 }
 
+function truncateWithEllipsis(text: string, maxChars: number): string {
+  const t = (text ?? '').replace(/\s+/g, ' ').trim();
+  if (maxChars <= 1) return '…';
+  if (t.length <= maxChars) return t;
+  return t.slice(0, Math.max(0, maxChars - 1)).trimEnd() + '…';
+}
+
+function setTruncatedText(el: HTMLElement, fullText: string, maxChars: number) {
+  const full = (fullText ?? '').trim();
+  el.textContent = truncateWithEllipsis(full, maxChars);
+  // Keep full value accessible via native tooltip.
+  el.title = full;
+}
+
 function setActiveChatTitleUi() {
   const el = document.getElementById('chatTitle') as HTMLDivElement | null;
   if (!el) return;
-  el.textContent = getActiveChatTitle();
+  setTruncatedText(el, getActiveChatTitle(), 42);
 }
 
 function setMessagesFromActiveChat() {
@@ -602,11 +617,12 @@ function renderSidebar() {
 
       const title = document.createElement('div');
       title.className = 'chatItemTitle';
-      title.textContent = c.title;
+      setTruncatedText(title, c.title, 36);
 
       const meta = document.createElement('div');
       meta.className = 'chatItemMeta';
-      meta.textContent = `${fmtRelativeTime(c.updatedAt)} · ${c.lastSnippet || '—'}`;
+      const snippet = c.lastSnippet || '—';
+      meta.textContent = `${fmtRelativeTime(c.updatedAt)} · ${truncateWithEllipsis(snippet, 60)}`;
 
       btn.appendChild(title);
       btn.appendChild(meta);
@@ -1383,6 +1399,24 @@ function setContextBadge(text: string, visible: boolean) {
   badge.textContent = text;
 }
 
+function formatContextAttachError(err: unknown): string {
+  const msg = errorMessage(err).trim();
+
+  // Keep it short and friendly for restricted pages.
+  const lower = msg.toLowerCase();
+  const looksRestricted =
+    lower.includes('cannot be scripted') ||
+    lower.includes('cannot run on this page') ||
+    lower.includes('cannot access a chrome://') ||
+    lower.includes('extensions gallery');
+
+  if (looksRestricted) {
+    return 'Context cannot be read on this page (Chrome Web Store / browser pages). Switch to a normal webpage and try again.';
+  }
+
+  return msg;
+}
+
 async function getTabContext(maxChars = 8000): Promise<TabContext> {
   const tabId = getContextTargetTabId();
   const resp = await sendMessage({ type: 'TAB_CONTEXT_GET', maxChars, tabId: tabId ?? undefined });
@@ -1522,7 +1556,7 @@ async function onGenerate() {
         }, 1500);
       } catch (e) {
         // Context is optional; show a system message and continue without it.
-        const text = `Context not attached: ${errorMessage(e)}`;
+        const text = `Context not attached: ${formatContextAttachError(e)}`;
         const id = uid();
         chatStoreState = await appendMessage(activeChatId, { role: 'system', text, ts: Date.now(), id });
         addMessageWithId('system', text, id);
@@ -1738,16 +1772,52 @@ async function main() {
   }
 
   if (splitter) {
-    const onPointerDown = (ev: PointerEvent) => {
-      // If collapsed, expand first.
+    const expandIfCollapsed = () => {
       if (document.documentElement.dataset.sidebarCollapsed === '1') {
-        // Apply immediately for this gesture; persist async.
         delete document.documentElement.dataset.sidebarCollapsed;
         void saveSidebarCollapsed(false);
       }
+    };
 
-      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    const startDrag = (startClientX: number) => {
+      expandIfCollapsed();
+      const startWidth = getCssVarPx('--sidebar-width-expanded') ?? SIDEBAR_WIDTH_DEFAULT;
+      document.body.classList.add('resizingSidebar');
+
+      const apply = (clientX: number) => {
+        const next = computeSidebarWidthExpanded(startWidth, startClientX, clientX, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
+        document.documentElement.style.setProperty('--sidebar-width-expanded', `${next}px`);
+      };
+
+      const finish = () => {
+        document.body.classList.remove('resizingSidebar');
+        const width = getCssVarPx('--sidebar-width-expanded') ?? SIDEBAR_WIDTH_DEFAULT;
+        void saveSidebarWidth(width);
+      };
+
+      // Mouse fallback (more reliable in extension popups).
+      const onMouseMove = (ev: MouseEvent) => apply(ev.clientX);
+      const onMouseUp = () => {
+        window.removeEventListener('mousemove', onMouseMove, true);
+        window.removeEventListener('mouseup', onMouseUp, true);
+        finish();
+      };
+
+      window.addEventListener('mousemove', onMouseMove, true);
+      window.addEventListener('mouseup', onMouseUp, true);
+    };
+
+    splitter.addEventListener('mousedown', (ev) => {
+      if (ev.button !== 0) return;
       ev.preventDefault();
+      startDrag(ev.clientX);
+    });
+
+    splitter.addEventListener('pointerdown', (ev) => {
+      // Use pointer events for touch/pen; mouse uses mousedown above.
+      if (ev.pointerType === 'mouse') return;
+      ev.preventDefault();
+      expandIfCollapsed();
 
       const startX = ev.clientX;
       const startWidth = getCssVarPx('--sidebar-width-expanded') ?? SIDEBAR_WIDTH_DEFAULT;
@@ -1759,29 +1829,30 @@ async function main() {
         // ignore
       }
 
-      const onMove = (clientX: number) => {
-        const dx = clientX - startX;
-        const next = clamp(Math.round(startWidth + dx), SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
+      const onMove = (moveEv: PointerEvent) => {
+        const next = computeSidebarWidthExpanded(startWidth, startX, moveEv.clientX, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
         document.documentElement.style.setProperty('--sidebar-width-expanded', `${next}px`);
       };
 
-      const onPointerMove = (e: PointerEvent) => onMove(e.clientX);
-      const onPointerUp = () => {
-        splitter.removeEventListener('pointermove', onPointerMove);
-        splitter.removeEventListener('pointerup', onPointerUp);
-        splitter.removeEventListener('pointercancel', onPointerUp);
+      const onUp = (upEv: PointerEvent) => {
+        window.removeEventListener('pointermove', onMove, true);
+        window.removeEventListener('pointerup', onUp, true);
+        window.removeEventListener('pointercancel', onUp, true);
         document.body.classList.remove('resizingSidebar');
-
+        try {
+          splitter.releasePointerCapture(upEv.pointerId);
+        } catch {
+          // ignore
+        }
         const width = getCssVarPx('--sidebar-width-expanded') ?? SIDEBAR_WIDTH_DEFAULT;
         void saveSidebarWidth(width);
       };
 
-      splitter.addEventListener('pointermove', onPointerMove);
-      splitter.addEventListener('pointerup', onPointerUp);
-      splitter.addEventListener('pointercancel', onPointerUp);
-    };
+      window.addEventListener('pointermove', onMove, true);
+      window.addEventListener('pointerup', onUp, true);
+      window.addEventListener('pointercancel', onUp, true);
+    });
 
-    splitter.addEventListener('pointerdown', onPointerDown);
     splitter.addEventListener('keydown', (ev) => {
       if (document.documentElement.dataset.sidebarCollapsed === '1') return;
       if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;

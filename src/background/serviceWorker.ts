@@ -1,5 +1,6 @@
 import { getSettings } from '../lib/settings';
 import { listModels, generate, HttpError } from '../lib/ollamaClient';
+import { getRestrictedPageHint, isRestrictedUrl } from '../lib/restrictedUrl';
 import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
 
 const SESSION_LAST_USER_TAB_ID_KEY = 'lastUserTabId';
@@ -47,8 +48,9 @@ function toErrorResponse(err: unknown): BackgroundResponse {
 }
 
 async function getActiveTabId(): Promise<number> {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab?.id) throw new Error('No active tab found');
+  // Avoid selecting extension windows / popups by constraining to normal windows.
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true, windowType: 'normal' });
+  if (!tab?.id) throw new Error('No active browser tab found');
   return tab.id;
 }
 
@@ -159,6 +161,19 @@ function normalizeWhitespace(text: string) {
 async function getTabContext(maxChars = 8000, explicitTabId?: number) {
   const tabId = await getContextTabId(explicitTabId);
 
+  // Best-effort early detection (URL can be unavailable without `tabs` permission).
+  let url = '';
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    url = typeof tab?.url === 'string' ? tab.url : '';
+  } catch {
+    url = '';
+  }
+  if (url && isRestrictedUrl(url)) {
+    const hint = getRestrictedPageHint(url);
+    throw new Error(hint ?? 'Context cannot be read on this page. Open a normal webpage and try again.');
+  }
+
   try {
     // Inject our content script on-demand (requires activeTab + scripting).
     await chrome.scripting.executeScript({
@@ -166,9 +181,12 @@ async function getTabContext(maxChars = 8000, explicitTabId?: number) {
       files: ['contentScript.js']
     });
   } catch (e) {
-    const hint =
-      'Cannot run on this page (chrome://, brave://, extensions gallery, PDF viewer, etc). Try a normal webpage.';
-    throw new Error(`${e instanceof Error ? e.message : String(e)}. ${hint}`);
+    const raw = e instanceof Error ? e.message : String(e);
+    const hint = getRestrictedPageHint() ??
+      'Context cannot be read on this page (Chrome Web Store / browser pages). Switch to a normal webpage and try again.';
+    // Keep user-facing message clean and stable; raw details vary by browser.
+    console.warn('Context injection failed', { tabId, error: raw });
+    throw new Error(hint);
   }
 
   const response = await new Promise<any>((resolve, reject) => {

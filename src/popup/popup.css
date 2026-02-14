@@ -191,6 +191,7 @@ body {
   display: grid;
   grid-template-columns: var(--sidebar-width) var(--sidebar-splitter-width) 1fr;
   min-height: 0;
+  min-width: 0;
 }
 
 .sidebar {
@@ -451,6 +452,7 @@ body.resizingSidebar {
   display: grid;
   grid-template-rows: auto 1fr;
   min-height: 0;
+  min-width: 0;
 }
 
 .chatHeader {
@@ -700,11 +702,13 @@ body.resizing.both {
   padding: var(--chat-padding);
   overflow: auto;
   min-height: 0;
+  min-width: 0;
 }
 
 .msgRow {
   display: flex;
   margin: 8px 0;
+  min-width: 0;
 }
 
 .msgRow.role-user {
@@ -763,6 +767,8 @@ body.resizing.both {
   border: 1px solid var(--c-border-soft);
   background: rgba(0, 0, 0, 0.20);
   overflow: auto;
+  max-width: 100%;
+  min-width: 0;
   font-family: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
 }

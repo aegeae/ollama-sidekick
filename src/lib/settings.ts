@@ -8,7 +8,7 @@ export type Settings = {
 
 export const DEFAULT_SETTINGS: Settings = {
   baseUrl: 'http://localhost:11434',
-  model: 'llama3.1',
+  model: '',
   theme: 'system',
   fontFamily: 'jetbrainsMono',
   fontSize: 13
@@ -77,7 +77,7 @@ export async function getSettings(): Promise<Settings> {
 
   return {
     baseUrl,
-    model: typeof data.model === 'string' && data.model.length > 0 ? data.model : DEFAULT_SETTINGS.model,
+    model: typeof data.model === 'string' && data.model.trim().length > 0 ? data.model.trim() : DEFAULT_SETTINGS.model,
     theme: theme ?? DEFAULT_SETTINGS.theme,
     fontFamily: fontFamily ?? DEFAULT_SETTINGS.fontFamily,
     fontSize: fontSize ?? DEFAULT_SETTINGS.fontSize

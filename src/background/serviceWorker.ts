@@ -2,6 +2,24 @@ import { getSettings } from '../lib/settings';
 import { listModels, generate, HttpError } from '../lib/ollamaClient';
 import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
 
+let modelsCache:
+  | {
+      baseUrl: string;
+      models: string[];
+      ts: number;
+    }
+  | null = null;
+
+async function getModelsCached(baseUrl: string): Promise<string[]> {
+  const now = Date.now();
+  if (modelsCache && modelsCache.baseUrl === baseUrl && now - modelsCache.ts < 10_000) {
+    return modelsCache.models;
+  }
+  const models = await listModels(baseUrl);
+  modelsCache = { baseUrl, models, ts: now };
+  return models;
+}
+
 function toErrorResponse(err: unknown): BackgroundResponse {
   if (err instanceof HttpError) {
     return {
@@ -73,11 +91,28 @@ async function getTabContext(maxChars = 8000) {
 }
 
 function buildChatUrl(prefillPrompt: string) {
-  const base = chrome.runtime.getURL('src/chat/chat.html');
-  const url = new URL(base);
+  const url = new URL(chrome.runtime.getURL('src/popup/popup.html'));
+  url.searchParams.set('mode', 'window');
   url.searchParams.set('prompt', prefillPrompt);
   url.searchParams.set('auto', '1');
   return url.toString();
+}
+
+async function openChatWindow(prefillPrompt: string) {
+  const data = await chrome.storage.local.get(['chatWinLeft', 'chatWinTop', 'chatWinWidth', 'chatWinHeight']);
+  const left = typeof data.chatWinLeft === 'number' ? Math.round(data.chatWinLeft) : 80;
+  const top = typeof data.chatWinTop === 'number' ? Math.round(data.chatWinTop) : 80;
+  const width = typeof data.chatWinWidth === 'number' ? Math.round(data.chatWinWidth) : 520;
+  const height = typeof data.chatWinHeight === 'number' ? Math.round(data.chatWinHeight) : 720;
+
+  await chrome.windows.create({
+    url: buildChatUrl(prefillPrompt),
+    type: 'popup',
+    left,
+    top,
+    width,
+    height
+  });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -93,7 +128,7 @@ chrome.contextMenus.onClicked.addListener((info) => {
   if (info.menuItemId !== 'ask-ollama-selection') return;
   const selection = (info.selectionText ?? '').trim();
   if (!selection) return;
-  void chrome.tabs.create({ url: buildChatUrl(selection) });
+  void openChatWindow(selection);
 });
 
 chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendResponse) => {
@@ -140,8 +175,32 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
           return;
         }
 
-        const model = typeof message.model === 'string' && message.model.trim() ? message.model : settings.model;
-        const result = await generate(settings.baseUrl, model, message.prompt);
+        const requestedModel = typeof message.model === 'string' ? message.model.trim() : '';
+        const savedModel = typeof settings.model === 'string' ? settings.model.trim() : '';
+
+        let modelToUse = requestedModel || savedModel;
+        try {
+          const models = await getModelsCached(settings.baseUrl);
+          if (models.length > 0) {
+            if (!modelToUse || !models.includes(modelToUse)) {
+              modelToUse = models[0];
+            }
+          }
+        } catch {
+          // If Ollama is down, we'll attempt with whatever model we have.
+        }
+
+        if (!modelToUse) {
+          const resp: BackgroundResponse = {
+            ok: false,
+            type: 'ERROR',
+            error: { message: 'No model selected (and no models found in Ollama)' }
+          };
+          sendResponse(resp);
+          return;
+        }
+
+        const result = await generate(settings.baseUrl, modelToUse, message.prompt);
         const resp: BackgroundResponse = { ok: true, type: 'OLLAMA_GENERATE_RESULT', text: result };
         sendResponse(resp);
         return;

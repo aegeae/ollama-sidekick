@@ -36,6 +36,8 @@ async function sendMessage(message: BackgroundRequest): Promise<BackgroundRespon
 type PopupSize = { width: number; height: number };
 type WindowBounds = { left: number; top: number; width: number; height: number };
 
+type PageMode = 'popup' | 'window';
+
 const POPUP_SIZE_DEFAULT: PopupSize = { width: 380, height: 600 };
 const POPUP_SIZE_MIN: PopupSize = { width: 360, height: 420 };
 const POPUP_SIZE_MAX: PopupSize = { width: 640, height: 900 };
@@ -46,6 +48,19 @@ const SIDEBAR_WIDTH_MAX = 420;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+function getPageModeFromUrl(): PageMode {
+  const url = new URL(location.href);
+  return url.searchParams.get('mode') === 'window' ? 'window' : 'popup';
+}
+
+function getQueryStateFromUrl(): { chatId: string | null; prompt: string; auto: boolean } {
+  const url = new URL(location.href);
+  const chatId = url.searchParams.get('chatId');
+  const prompt = url.searchParams.get('prompt') ?? '';
+  const auto = url.searchParams.get('auto') === '1';
+  return { chatId: chatId && chatId.trim() ? chatId : null, prompt, auto };
 }
 
 async function getSavedSidebarPrefs(): Promise<{ width: number; collapsed: boolean }> {
@@ -348,10 +363,56 @@ function renderSidebar() {
   const activeChatId = getActiveChatId();
   container.innerHTML = '';
 
+  const mkSvg = (kind: 'rename' | 'delete') => {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('class', 'iconSvg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+
+    const mkPath = (d: string, extra: Record<string, string> = {}) => {
+      const p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', 'currentColor');
+      for (const [k, v] of Object.entries(extra)) p.setAttribute(k, v);
+      return p;
+    };
+
+    if (kind === 'rename') {
+      svg.appendChild(mkPath('M3 13h3l7-7-3-3-7 7v3Z', { 'stroke-width': '1.2', 'stroke-linejoin': 'round' }));
+      svg.appendChild(mkPath('M9.5 4.5 11.5 6.5', { 'stroke-width': '1.2', 'stroke-linecap': 'round' }));
+    } else {
+      svg.appendChild(
+        mkPath('M3.5 5h9M6.2 5V3.8c0-.4.3-.8.8-.8h2c.4 0 .8.3.8.8V5', {
+          'stroke-width': '1.2',
+          'stroke-linecap': 'round'
+        })
+      );
+      svg.appendChild(
+        mkPath('M5.5 5.5v7c0 .6.4 1 1 1h3c.6 0 1-.4 1-1v-7', {
+          'stroke-width': '1.2',
+          'stroke-linejoin': 'round'
+        })
+      );
+      svg.appendChild(
+        mkPath('M7 7.2v4.6M9 7.2v4.6', {
+          'stroke-width': '1.2',
+          'stroke-linecap': 'round'
+        })
+      );
+    }
+
+    return svg;
+  };
+
   const renderChatList = (list: ChatSummary[]) => {
     const wrap = document.createElement('div');
     wrap.className = 'chatList';
     for (const c of list) {
+      const row = document.createElement('div');
+      row.className = `chatRow${c.id === activeChatId ? ' isActive' : ''}`;
+
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = `chatItem${c.id === activeChatId ? ' isActive' : ''}`;
@@ -368,7 +429,34 @@ function renderSidebar() {
 
       btn.appendChild(title);
       btn.appendChild(meta);
-      wrap.appendChild(btn);
+
+      const tools = document.createElement('div');
+      tools.className = 'chatTools';
+
+      const renameBtn = document.createElement('button');
+      renameBtn.type = 'button';
+      renameBtn.className = 'iconBtn small';
+      renameBtn.title = 'Rename chat';
+      renameBtn.setAttribute('aria-label', 'Rename chat');
+      renameBtn.dataset.action = 'chat-rename';
+      renameBtn.dataset.chatId = c.id;
+      renameBtn.appendChild(mkSvg('rename'));
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'iconBtn small';
+      delBtn.title = 'Delete chat';
+      delBtn.setAttribute('aria-label', 'Delete chat');
+      delBtn.dataset.action = 'chat-delete';
+      delBtn.dataset.chatId = c.id;
+      delBtn.appendChild(mkSvg('delete'));
+
+      tools.appendChild(renameBtn);
+      tools.appendChild(delBtn);
+
+      row.appendChild(btn);
+      row.appendChild(tools);
+      wrap.appendChild(row);
     }
     return wrap;
   };
@@ -397,49 +485,6 @@ function renderSidebar() {
     tools.className = 'folderTools';
 
     if (showTools && folderId) {
-      const mkSvg = (kind: 'rename' | 'delete') => {
-        const ns = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(ns, 'svg');
-        svg.setAttribute('class', 'iconSvg');
-        svg.setAttribute('viewBox', '0 0 16 16');
-        svg.setAttribute('aria-hidden', 'true');
-
-        const mkPath = (d: string, extra: Record<string, string> = {}) => {
-          const p = document.createElementNS(ns, 'path');
-          p.setAttribute('d', d);
-          p.setAttribute('fill', 'none');
-          p.setAttribute('stroke', 'currentColor');
-          for (const [k, v] of Object.entries(extra)) p.setAttribute(k, v);
-          return p;
-        };
-
-        if (kind === 'rename') {
-          svg.appendChild(mkPath('M3 13h3l7-7-3-3-7 7v3Z', { 'stroke-width': '1.2', 'stroke-linejoin': 'round' }));
-          svg.appendChild(mkPath('M9.5 4.5 11.5 6.5', { 'stroke-width': '1.2', 'stroke-linecap': 'round' }));
-        } else {
-          svg.appendChild(
-            mkPath('M3.5 5h9M6.2 5V3.8c0-.4.3-.8.8-.8h2c.4 0 .8.3.8.8V5', {
-              'stroke-width': '1.2',
-              'stroke-linecap': 'round'
-            })
-          );
-          svg.appendChild(
-            mkPath('M5.5 5.5v7c0 .6.4 1 1 1h3c.6 0 1-.4 1-1v-7', {
-              'stroke-width': '1.2',
-              'stroke-linejoin': 'round'
-            })
-          );
-          svg.appendChild(
-            mkPath('M7 7.2v4.6M9 7.2v4.6', {
-              'stroke-width': '1.2',
-              'stroke-linecap': 'round'
-            })
-          );
-        }
-
-        return svg;
-      };
-
       const renameBtn = document.createElement('button');
       renameBtn.type = 'button';
       renameBtn.className = 'iconBtn small';
@@ -687,8 +732,10 @@ async function openPopoutWindow() {
     ...getCurrentPopupSize()
   };
 
-  const url = new URL(chrome.runtime.getURL('src/chat/chat.html'));
-  url.searchParams.set('popout', '1');
+  const url = new URL(chrome.runtime.getURL('src/popup/popup.html'));
+  url.searchParams.set('mode', 'window');
+  const activeChatId = getActiveChatId();
+  if (activeChatId) url.searchParams.set('chatId', activeChatId);
 
   await chrome.windows.create({
     url: url.toString(),
@@ -697,6 +744,53 @@ async function openPopoutWindow() {
     top: Math.round(bounds.top),
     width: Math.round(bounds.width),
     height: Math.round(bounds.height)
+  });
+}
+
+function startWindowBoundsPersistence(mode: PageMode) {
+  if (mode !== 'window') return;
+
+  const save = () => {
+    chrome.windows.getCurrent((win) => {
+      if (!win) return;
+      const left = typeof win.left === 'number' ? win.left : undefined;
+      const top = typeof win.top === 'number' ? win.top : undefined;
+      const width = typeof win.width === 'number' ? win.width : undefined;
+      const height = typeof win.height === 'number' ? win.height : undefined;
+      if (left == null || top == null || width == null || height == null) return;
+      void chrome.storage.local.set({
+        chatWinLeft: left,
+        chatWinTop: top,
+        chatWinWidth: width,
+        chatWinHeight: height
+      });
+    });
+  };
+
+  save();
+  const t = window.setInterval(save, 1500);
+  window.addEventListener('beforeunload', () => {
+    window.clearInterval(t);
+    save();
+  });
+}
+
+async function openCompactWindow() {
+  const size = (await getSavedPopupSize()) ?? POPUP_SIZE_DEFAULT;
+  const bounds = (await getSavedChatWindowBounds()) ?? { left: 120, top: 120, ...size };
+
+  const url = new URL(chrome.runtime.getURL('src/popup/popup.html'));
+  url.searchParams.set('mode', 'popup');
+  const activeChatId = getActiveChatId();
+  if (activeChatId) url.searchParams.set('chatId', activeChatId);
+
+  await chrome.windows.create({
+    url: url.toString(),
+    type: 'popup',
+    left: Math.round(bounds.left),
+    top: Math.round(bounds.top),
+    width: Math.round(size.width),
+    height: Math.round(size.height)
   });
 }
 
@@ -758,14 +852,15 @@ function setupSettingsModal(onSaved: () => void) {
     customOpt.textContent = 'Custom…';
     modelSelectEl.appendChild(customOpt);
 
-    if (models.includes(savedModel)) {
-      modelSelectEl.value = savedModel;
-      modelCustomEl.value = savedModel;
-      modelCustomEl.hidden = true;
-    } else {
-      modelSelectEl.value = CUSTOM_MODEL_VALUE;
-      modelCustomEl.value = savedModel;
-      modelCustomEl.hidden = false;
+    const saved = savedModel.trim();
+    const effectiveModel = saved && models.includes(saved) ? saved : models[0];
+    modelSelectEl.value = effectiveModel;
+    modelCustomEl.value = effectiveModel;
+    modelCustomEl.hidden = true;
+
+    if (effectiveModel !== saved) {
+      // Persist immediately so the extension doesn't keep using a missing model.
+      await setSettings({ model: effectiveModel });
     }
   };
 
@@ -980,12 +1075,11 @@ async function loadModels() {
 
   const models = await fetchModels();
   if (models.length === 0) {
-    // If listing fails (e.g. Ollama down), still provide a reasonable default.
     const opt = document.createElement('option');
-    opt.value = settings.model;
-    opt.textContent = settings.model;
+    opt.value = '';
+    opt.textContent = 'No models found (is Ollama running?)';
     modelSelect.appendChild(opt);
-    modelSelect.value = settings.model;
+    modelSelect.value = '';
     return;
   }
 
@@ -996,16 +1090,16 @@ async function loadModels() {
     modelSelect.appendChild(opt);
   }
 
-  // Keep the stored model selectable even if Ollama didn't report it.
-  const hasStoredModel = models.includes(settings.model);
-  if (!hasStoredModel) {
-    const opt = document.createElement('option');
-    opt.value = settings.model;
-    opt.textContent = settings.model;
-    modelSelect.appendChild(opt);
-  }
+  const saved = settings.model.trim();
+  const effectiveModel = saved && models.includes(saved) ? saved : models[0];
+  modelSelect.value = effectiveModel;
 
-  modelSelect.value = settings.model;
+  if (effectiveModel !== saved) {
+    // Auto-heal stored settings so we don't keep sending a missing model.
+    await setSettings({ model: effectiveModel });
+    // Keep settings modal in sync if it's open.
+    settingsModelUiSync?.syncModel(effectiveModel);
+  }
 }
 
 async function fetchModels(): Promise<string[]> {
@@ -1116,8 +1210,15 @@ async function onGenerate() {
 }
 
 async function main() {
-  applyPopupSize((await getSavedPopupSize()) ?? POPUP_SIZE_DEFAULT);
-  setupPopupResize();
+  const mode = getPageModeFromUrl();
+  document.documentElement.dataset.mode = mode;
+
+  if (mode !== 'window') {
+    applyPopupSize((await getSavedPopupSize()) ?? POPUP_SIZE_DEFAULT);
+    setupPopupResize();
+  } else {
+    startWindowBoundsPersistence(mode);
+  }
 
   // Apply theme + typography ASAP.
   applyUiSettings(await getSettings());
@@ -1127,11 +1228,27 @@ async function main() {
   const modelSelect = $('modelSelect') as HTMLSelectElement;
   const useContextToggle = document.getElementById('useContextToggle') as HTMLInputElement | null;
   const popoutBtn = document.getElementById('popoutBtn') as HTMLButtonElement | null;
+  const popinBtn = document.getElementById('popinBtn') as HTMLButtonElement | null;
 
   btn.addEventListener('click', () => void onGenerate());
 
   if (popoutBtn) {
-    popoutBtn.addEventListener('click', () => void openPopoutWindow());
+    popoutBtn.addEventListener('click', () => {
+      void (async () => {
+        await openPopoutWindow();
+        // Close the action popup so the user only manages one window.
+        window.close();
+      })();
+    });
+  }
+
+  if (popinBtn) {
+    popinBtn.addEventListener('click', () => {
+      void (async () => {
+        await openCompactWindow();
+        window.close();
+      })();
+    });
   }
 
   setupSettingsModal(() => {
@@ -1177,6 +1294,19 @@ async function main() {
     await loadModels();
   } catch (e) {
     addMessage('error', `Failed to load models. Is Ollama running?\n${String((e as any)?.message ?? e)}`);
+  }
+
+  // URL param support (used by context-menu open and window-mode deep links)
+  const qs = getQueryStateFromUrl();
+  if (qs.chatId && qs.chatId !== getActiveChatId()) {
+    await selectChat(qs.chatId);
+  }
+  if (qs.prompt.trim()) {
+    promptEl.value = qs.prompt;
+    autoGrowTextarea(promptEl);
+    if (qs.auto) {
+      await onGenerate();
+    }
   }
 
   // Sidebar interactions
@@ -1309,9 +1439,9 @@ async function main() {
       }
 
       const actionBtn = target.closest('button[data-action]') as HTMLButtonElement | null;
-      if (actionBtn?.dataset.action && actionBtn.dataset.folderId) {
-        const folderId = actionBtn.dataset.folderId;
-        if (actionBtn.dataset.action === 'folder-rename') {
+      if (actionBtn?.dataset.action) {
+        if (actionBtn.dataset.action === 'folder-rename' && actionBtn.dataset.folderId) {
+          const folderId = actionBtn.dataset.folderId;
           void (async () => {
             const f = chatStoreState?.folders.find((x) => x.id === folderId);
             const name = prompt('Rename folder', f?.name ?? '') ?? '';
@@ -1323,7 +1453,8 @@ async function main() {
           return;
         }
 
-        if (actionBtn.dataset.action === 'folder-delete') {
+        if (actionBtn.dataset.action === 'folder-delete' && actionBtn.dataset.folderId) {
+          const folderId = actionBtn.dataset.folderId;
           void (async () => {
             const f = chatStoreState?.folders.find((x) => x.id === folderId);
             const ok = confirm(`Delete folder "${f?.name ?? 'Folder'}"? Chats will be moved to Unfiled.`);
@@ -1331,6 +1462,51 @@ async function main() {
             chatStoreState = await deleteFolder(folderId);
             renderFolderSelect();
             renderSidebar();
+          })();
+          return;
+        }
+
+        if (actionBtn.dataset.action === 'chat-rename' && actionBtn.dataset.chatId) {
+          const chatId = actionBtn.dataset.chatId;
+          void (async () => {
+            if (!chatStoreState) return;
+            const chat = chatStoreState.chats.find((c) => c.id === chatId);
+            const title = prompt('Rename chat', chat?.title ?? '') ?? '';
+            if (!title.trim()) return;
+            chatStoreState = await renameChat(chatId, title);
+            if (getActiveChatId() === chatId) setActiveChatTitleUi();
+            renderSidebar();
+          })();
+          return;
+        }
+
+        if (actionBtn.dataset.action === 'chat-delete' && actionBtn.dataset.chatId) {
+          const chatId = actionBtn.dataset.chatId;
+          void (async () => {
+            if (!chatStoreState) return;
+            const chat = chatStoreState.chats.find((c) => c.id === chatId);
+            const ok = confirm(`Delete chat "${chat?.title ?? 'Chat'}"?`);
+            if (!ok) return;
+
+            const wasActive = getActiveChatId() === chatId;
+            chatStoreState = await deleteChat(chatId);
+
+            if (wasActive) {
+              // Pick new active if needed
+              if (chatStoreState.activeChatId) {
+                await selectChat(chatStoreState.activeChatId);
+              } else if (chatStoreState.chats.length) {
+                const summaries = getChatSummaries(chatStoreState);
+                if (summaries[0]) await selectChat(summaries[0].id);
+              } else {
+                await ensureAtLeastOneChat();
+                if (chatStoreState?.activeChatId) await selectChat(chatStoreState.activeChatId);
+              }
+            }
+
+            renderFolderSelect();
+            renderSidebar();
+            setActiveChatTitleUi();
           })();
           return;
         }

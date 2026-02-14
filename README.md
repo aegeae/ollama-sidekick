@@ -63,9 +63,12 @@ For Chrome Web Store packaging:
 
 In the chat window:
 
-- Context is attached automatically (best-effort) when you send a message.
+- Open the **Context preview** drawer to choose Selection/Excerpt/Budget.
+- Context is extracted on-demand (best-effort) when you send a message.
 
 Context is only extracted on user action (when you send) and is not persisted.
+
+Details: [docs/USAGE.md](docs/USAGE.md)
 
 Notes / limitations:
 

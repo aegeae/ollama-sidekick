@@ -33,3 +33,9 @@ It will not work on:
 - Open the chat window → open DevTools for the extension window
 - Reload the extension in `brave://extensions` / `chrome://extensions`
 - Try again on a normal `https://` page
+
+## Diagnostics capture doesn’t show anything
+
+- Diagnostics capture only records events **after** you start capturing.
+- Request capture only observes network calls made by the page via `fetch()` / `XMLHttpRequest` (it is not a full DevTools Network capture).
+- Diagnostics capture is unavailable on restricted pages (`chrome://`, Web Store, extension pages), similar to Context extraction.

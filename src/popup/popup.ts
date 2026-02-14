@@ -1,4 +1,4 @@
-import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
+import type { BackgroundRequest, BackgroundResponse, TabConsoleLogEntry, TabNetLogEntry } from '../types/messages';
 import { DEFAULT_SETTINGS, getSettings, setSettings, type Settings } from '../lib/settings';
 import { applyUiSettings } from '../lib/uiSettings';
 import {
@@ -32,7 +32,13 @@ import {
 import { computeSidebarWidthExpanded } from '../lib/sidebarResizeMath';
 import { tabTitleToChatTitle } from '../lib/tabTitleToChatTitle';
 import { getChatIdForTab, setChatIdForTab } from '../lib/sessionTabChatMap';
-import { buildContextBlock, buildPromptWithOptionalContext, type TabContextLike } from '../lib/promptWithContext';
+import {
+  buildContextBlock,
+  buildContextBlockWithExtras,
+  buildDiagnosticsOnlyContextBlock,
+  buildPromptWithOptionalContext,
+  type TabContextLike
+} from '../lib/promptWithContext';
 import { buildContextPreviewCacheKey } from '../lib/contextPreviewCacheKey';
 
 const FOLDER_UNAVAILABLE_HINT =
@@ -1745,6 +1751,71 @@ let currentModelTokenBudget: number | null = null;
 
 let ctxDrawerOpen = false;
 
+const consoleContextExtrasByTabKey = new Map<string, string>();
+const consoleContextVersionByTabKey = new Map<string, number>();
+const netContextExtrasByTabKey = new Map<string, string>();
+const netContextVersionByTabKey = new Map<string, number>();
+const contextClearedByTabKey = new Set<string>();
+
+type DiagnosticsMode = 'console' | 'network';
+let diagnosticsMode: DiagnosticsMode = 'console';
+
+function getCurrentContextTabKey(): string {
+  const tabId = getContextTargetTabId();
+  return typeof tabId === 'number' && Number.isFinite(tabId) && tabId > 0 ? `tab:${Math.floor(tabId)}` : 'tab:active';
+}
+
+function isContextClearedForCurrentTab(): boolean {
+  return contextClearedByTabKey.has(getCurrentContextTabKey());
+}
+
+function setContextClearedForCurrentTab(cleared: boolean): void {
+  const key = getCurrentContextTabKey();
+  if (cleared) contextClearedByTabKey.add(key);
+  else contextClearedByTabKey.delete(key);
+}
+
+function getConsoleContextExtrasForCurrentTab(): string | null {
+  const key = getCurrentContextTabKey();
+  return consoleContextExtrasByTabKey.get(key) ?? null;
+}
+
+function getNetContextExtrasForCurrentTab(): string | null {
+  const key = getCurrentContextTabKey();
+  return netContextExtrasByTabKey.get(key) ?? null;
+}
+
+function getDiagnosticsExtrasForCurrentTab(): string | null {
+  const parts: string[] = [];
+  const c = (getConsoleContextExtrasForCurrentTab() ?? '').trim();
+  const n = (getNetContextExtrasForCurrentTab() ?? '').trim();
+  if (c) parts.push(c);
+  if (n) parts.push(n);
+  return parts.length ? parts.join('\n\n') : null;
+}
+
+function bumpConsoleContextVersionForCurrentTab(): void {
+  const key = getCurrentContextTabKey();
+  const prev = consoleContextVersionByTabKey.get(key) ?? 0;
+  consoleContextVersionByTabKey.set(key, prev + 1);
+}
+
+function bumpNetContextVersionForCurrentTab(): void {
+  const key = getCurrentContextTabKey();
+  const prev = netContextVersionByTabKey.get(key) ?? 0;
+  netContextVersionByTabKey.set(key, prev + 1);
+}
+
+function getConsoleContextVersionForCurrentTab(): number {
+  const key = getCurrentContextTabKey();
+  return consoleContextVersionByTabKey.get(key) ?? 0;
+}
+
+function getNetContextVersionForCurrentTab(): number {
+  const key = getCurrentContextTabKey();
+  return netContextVersionByTabKey.get(key) ?? 0;
+}
+
 let ctxDrawerCache: {
   key: string;
   ctx: TabContextLike | null;
@@ -1753,13 +1824,366 @@ let ctxDrawerCache: {
   contextAttached: boolean;
 } | null = null;
 
+let consolePollTimer: number | null = null;
+let consoleLastRenderedCount = 0;
+let consoleLastRenderedTail = '';
+
+let consoleEffectiveTabId: number | null = null;
+
+let netPollTimer: number | null = null;
+let netLastRenderedCount = 0;
+let netLastRenderedTail = '';
+
+let netEffectiveTabId: number | null = null;
+
+let netCaptureIncludeBodies = false;
+
+function getConsoleOpsTabId(): number | null {
+  return typeof consoleEffectiveTabId === 'number' && Number.isFinite(consoleEffectiveTabId) && consoleEffectiveTabId > 0
+    ? consoleEffectiveTabId
+    : getContextTargetTabId();
+}
+
+function getNetOpsTabId(): number | null {
+  return typeof netEffectiveTabId === 'number' && Number.isFinite(netEffectiveTabId) && netEffectiveTabId > 0
+    ? netEffectiveTabId
+    : getContextTargetTabId();
+}
+
+function setConsoleCaptureStatus(text: string) {
+  const el = document.getElementById('consoleCaptureStatus') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function setConsoleCaptureMeta(text: string) {
+  const el = document.getElementById('consoleCaptureMeta') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function setConsoleCaptureLogsText(text: string) {
+  const el = document.getElementById('consoleCaptureLogs') as HTMLPreElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function formatConsoleLogs(entries: TabConsoleLogEntry[]): string {
+  return entries
+    .map((e) => {
+      const ts = typeof e.ts === 'number' && Number.isFinite(e.ts) ? e.ts : Date.now();
+      const time = new Date(ts).toISOString().slice(11, 19);
+      const level = typeof e.level === 'string' ? e.level : 'log';
+      const text = typeof e.text === 'string' ? e.text : '';
+      return `[${time}] [${level}] ${text}`;
+    })
+    .join('\n');
+}
+
+function stopConsolePolling() {
+  if (consolePollTimer != null) {
+    window.clearInterval(consolePollTimer);
+    consolePollTimer = null;
+  }
+}
+
+function stopNetPolling() {
+  if (netPollTimer != null) {
+    window.clearInterval(netPollTimer);
+    netPollTimer = null;
+  }
+}
+
+function startConsolePolling() {
+  if (consolePollTimer != null) return;
+  consolePollTimer = window.setInterval(() => {
+    if (!ctxDrawerOpen) return;
+    void refreshConsoleCaptureView();
+  }, 1000);
+}
+
+function startNetPolling() {
+  if (netPollTimer != null) return;
+  netPollTimer = window.setInterval(() => {
+    if (!ctxDrawerOpen) return;
+    void refreshNetCaptureView();
+  }, 1000);
+}
+
+async function refreshConsoleCaptureView(): Promise<void> {
+  const tabId = getConsoleOpsTabId();
+
+  try {
+    const resp = await sendMessage({ type: 'TAB_CONSOLE_LOGS_GET', tabId: tabId ?? undefined });
+    if (!resp.ok) throw new Error(formatError(resp));
+    if (resp.type !== 'TAB_CONSOLE_LOGS_GET_RESULT') throw new Error('Unexpected response while reading console logs');
+
+    const logs = Array.isArray(resp.logs) ? resp.logs : [];
+    const capturing = resp.capturing === true;
+
+    // Keep using the resolved tab id from background for subsequent operations.
+    consoleEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : consoleEffectiveTabId;
+
+    const toggleBtn = document.getElementById('consoleCaptureToggleBtn') as HTMLButtonElement | null;
+    if (toggleBtn) toggleBtn.textContent = capturing ? 'Stop capturing' : 'Capture console';
+
+    setConsoleCaptureMeta(`Active tab · Console: ${capturing ? 'On' : 'Off'} · ${logs.length.toLocaleString()} lines`);
+
+    // Avoid re-rendering the <pre> if nothing changed.
+    const tail = logs.length > 0 ? (logs[logs.length - 1]?.text ?? '') : '';
+    if (logs.length !== consoleLastRenderedCount || tail !== consoleLastRenderedTail) {
+      setConsoleCaptureLogsText(logs.length ? formatConsoleLogs(logs) : '(No logs yet. Start capture, then interact with the page.)');
+      consoleLastRenderedCount = logs.length;
+      consoleLastRenderedTail = tail;
+    }
+
+    if (capturing && ctxDrawerOpen) startConsolePolling();
+    if (!capturing) stopConsolePolling();
+  } catch (e) {
+    stopConsolePolling();
+    setConsoleCaptureMeta('Active tab · Console: Off');
+    setConsoleCaptureStatus(errorMessage(e));
+  }
+}
+
+async function toggleConsoleCapture(): Promise<void> {
+  const tabId = getConsoleOpsTabId();
+  setConsoleCaptureStatus('');
+
+  const stateResp = await sendMessage({ type: 'TAB_CONSOLE_LOGS_GET', tabId: tabId ?? undefined });
+  if (!stateResp.ok) throw new Error(formatError(stateResp));
+  if (stateResp.type !== 'TAB_CONSOLE_LOGS_GET_RESULT') throw new Error('Unexpected response while reading console logs');
+
+  const capturing = stateResp.capturing === true;
+  if (!capturing) {
+    setConsoleCaptureStatus('Starting…');
+    const resp = await sendMessage({ type: 'TAB_CONSOLE_CAPTURE_START', tabId: tabId ?? undefined });
+    if (!resp.ok) throw new Error(formatError(resp));
+    if (resp.type !== 'TAB_CONSOLE_CAPTURE_START_RESULT') throw new Error('Unexpected response while starting console capture');
+
+     consoleEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : consoleEffectiveTabId;
+    setConsoleCaptureStatus('Capturing (from now on).');
+    await refreshConsoleCaptureView();
+    return;
+  }
+
+  setConsoleCaptureStatus('Stopping…');
+  const resp = await sendMessage({ type: 'TAB_CONSOLE_CAPTURE_STOP', tabId: tabId ?? undefined });
+  if (!resp.ok) throw new Error(formatError(resp));
+  if (resp.type !== 'TAB_CONSOLE_CAPTURE_STOP_RESULT') throw new Error('Unexpected response while stopping console capture');
+
+  // Clear tab pinning so future operations follow the UI's resolved tab again.
+  consoleEffectiveTabId = null;
+  setConsoleCaptureStatus('Capture stopped.');
+  await refreshConsoleCaptureView();
+}
+
 function getCtxDrawerCacheKey(): string {
   return buildContextPreviewCacheKey({
     tabId: getContextTargetTabId(),
     includeSelection: contextUiPrefs.includeSelection,
     includeExcerpt: contextUiPrefs.includeExcerpt,
-    maxChars: contextUiPrefs.maxChars
+    maxChars: contextUiPrefs.maxChars,
+    consoleContextVersion: getConsoleContextVersionForCurrentTab(),
+    netContextVersion: getNetContextVersionForCurrentTab(),
+    contextCleared: isContextClearedForCurrentTab()
   });
+}
+
+function formatConsoleExtrasForContext(entries: TabConsoleLogEntry[]): string {
+  const body = entries.length ? formatConsoleLogs(entries) : '(No logs captured.)';
+  return ['Console logs (active tab):', body].join('\n');
+}
+
+async function attachConsoleLogsToContext(): Promise<void> {
+  setCtxDrawerStatus('Reading console logs…');
+
+  const tabId = getContextTargetTabId();
+  const resp = await sendMessage({ type: 'TAB_CONSOLE_LOGS_GET', tabId: tabId ?? undefined });
+  if (!resp.ok) throw new Error(formatError(resp));
+  if (resp.type !== 'TAB_CONSOLE_LOGS_GET_RESULT') throw new Error('Unexpected response while reading console logs');
+
+  const logs = Array.isArray(resp.logs) ? resp.logs : [];
+  if (logs.length === 0) {
+    setCtxDrawerStatus('No logs captured yet.');
+    return;
+  }
+
+  consoleContextExtrasByTabKey.set(getCurrentContextTabKey(), formatConsoleExtrasForContext(logs));
+  bumpConsoleContextVersionForCurrentTab();
+
+  await refreshCtxDrawerFromComposer();
+  if (!contextUiPrefs.includeSelection && !contextUiPrefs.includeExcerpt) {
+    setCtxDrawerStatus('Page context disabled; attaching diagnostics only.');
+  } else {
+    setCtxDrawerStatus('Context updated.');
+  }
+}
+
+function setNetCaptureStatus(text: string) {
+  const el = document.getElementById('netCaptureStatus') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function setNetCaptureMeta(text: string) {
+  const el = document.getElementById('netCaptureMeta') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function setNetCaptureLogsText(text: string) {
+  const el = document.getElementById('netCaptureLogs') as HTMLPreElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function formatNetLogs(entries: TabNetLogEntry[]): string {
+  return entries
+    .map((e) => {
+      const ts = typeof e.ts === 'number' && Number.isFinite(e.ts) ? e.ts : Date.now();
+      const time = new Date(ts).toISOString().slice(11, 19);
+      const kind = e.kind === 'xhr' ? 'xhr' : 'fetch';
+      const method = (typeof e.method === 'string' ? e.method : 'GET').toUpperCase();
+      const url = typeof e.url === 'string' ? e.url : '';
+      const status = typeof e.status === 'number' ? String(e.status) : '—';
+      const ms = typeof e.durationMs === 'number' ? `${Math.max(0, Math.round(e.durationMs))}ms` : '—';
+      const err = typeof e.error === 'string' && e.error.trim() ? ` | ${e.error.trim()}` : '';
+
+      const lines: string[] = [`[${time}] [${kind}] ${method} ${url} -> ${status} (${ms})${err}`];
+      if (typeof e.requestBodyText === 'string' && e.requestBodyText.length) {
+        lines.push(`  request: ${e.requestBodyText}`);
+      }
+      if (typeof e.responseBodyText === 'string' && e.responseBodyText.length) {
+        lines.push(`  response: ${e.responseBodyText}`);
+      }
+      if (e.bodyTruncated === true) {
+        lines.push('  (body truncated)');
+      }
+      return lines.join('\n');
+    })
+    .join('\n');
+}
+
+async function refreshNetCaptureView(): Promise<void> {
+  const tabId = getNetOpsTabId();
+
+  try {
+    const resp = await sendMessage({ type: 'TAB_NET_LOGS_GET', tabId: tabId ?? undefined });
+    if (!resp.ok) throw new Error(formatError(resp));
+    if (resp.type !== 'TAB_NET_LOGS_GET_RESULT') throw new Error('Unexpected response while reading network logs');
+
+    const logs = Array.isArray(resp.logs) ? resp.logs : [];
+    const capturing = resp.capturing === true;
+
+    // Keep using the resolved tab id from background for subsequent operations.
+    netEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : netEffectiveTabId;
+
+    const toggleBtn = document.getElementById('netCaptureToggleBtn') as HTMLButtonElement | null;
+    if (toggleBtn) toggleBtn.textContent = capturing ? 'Stop capturing' : 'Capture requests';
+
+    setNetCaptureMeta(`Active tab · Network: ${capturing ? 'On' : 'Off'} · ${logs.length.toLocaleString()} requests`);
+
+    const tail = logs.length > 0 ? (logs[logs.length - 1]?.url ?? '') : '';
+    if (logs.length !== netLastRenderedCount || tail !== netLastRenderedTail) {
+      setNetCaptureLogsText(logs.length ? formatNetLogs(logs) : '(No requests yet. Start capture, then interact with the page.)');
+      netLastRenderedCount = logs.length;
+      netLastRenderedTail = tail;
+    }
+
+    if (capturing && ctxDrawerOpen) startNetPolling();
+    if (!capturing) stopNetPolling();
+  } catch (e) {
+    stopNetPolling();
+    setNetCaptureMeta('Active tab · Network: Off');
+    setNetCaptureStatus(errorMessage(e));
+  }
+}
+
+async function toggleNetCapture(): Promise<void> {
+  const tabId = getNetOpsTabId();
+  setNetCaptureStatus('');
+
+  const stateResp = await sendMessage({ type: 'TAB_NET_LOGS_GET', tabId: tabId ?? undefined });
+  if (!stateResp.ok) throw new Error(formatError(stateResp));
+  if (stateResp.type !== 'TAB_NET_LOGS_GET_RESULT') throw new Error('Unexpected response while reading network logs');
+
+  const capturing = stateResp.capturing === true;
+  if (!capturing) {
+    setNetCaptureStatus('Starting…');
+    const resp = await sendMessage({
+      type: 'TAB_NET_CAPTURE_START',
+      tabId: tabId ?? undefined,
+      includeBodies: netCaptureIncludeBodies
+    });
+    if (!resp.ok) throw new Error(formatError(resp));
+    if (resp.type !== 'TAB_NET_CAPTURE_START_RESULT') throw new Error('Unexpected response while starting network capture');
+
+    netEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : netEffectiveTabId;
+
+    setNetCaptureStatus('Capturing (from now on).');
+    await refreshNetCaptureView();
+    return;
+  }
+
+  setNetCaptureStatus('Stopping…');
+  const resp = await sendMessage({ type: 'TAB_NET_CAPTURE_STOP', tabId: tabId ?? undefined });
+  if (!resp.ok) throw new Error(formatError(resp));
+  if (resp.type !== 'TAB_NET_CAPTURE_STOP_RESULT') throw new Error('Unexpected response while stopping network capture');
+
+  netEffectiveTabId = null;
+  setNetCaptureStatus('Capture stopped.');
+  await refreshNetCaptureView();
+}
+
+function formatNetExtrasForContext(entries: TabNetLogEntry[]): string {
+  const body = entries.length ? formatNetLogs(entries) : '(No requests captured.)';
+  return ['HTTP requests (active tab):', body].join('\n');
+}
+
+async function attachNetLogsToContext(): Promise<void> {
+  setCtxDrawerStatus('Reading requests…');
+
+  const tabId = getNetOpsTabId();
+  const resp = await sendMessage({ type: 'TAB_NET_LOGS_GET', tabId: tabId ?? undefined });
+  if (!resp.ok) throw new Error(formatError(resp));
+  if (resp.type !== 'TAB_NET_LOGS_GET_RESULT') throw new Error('Unexpected response while reading network logs');
+
+  netEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : netEffectiveTabId;
+
+  const logs = Array.isArray(resp.logs) ? resp.logs : [];
+  if (logs.length === 0) {
+    setCtxDrawerStatus('No requests captured yet.');
+    return;
+  }
+
+  netContextExtrasByTabKey.set(getCurrentContextTabKey(), formatNetExtrasForContext(logs));
+  bumpNetContextVersionForCurrentTab();
+
+  await refreshCtxDrawerFromComposer();
+  if (!contextUiPrefs.includeSelection && !contextUiPrefs.includeExcerpt) {
+    setCtxDrawerStatus('Page context disabled; attaching diagnostics only.');
+  } else {
+    setCtxDrawerStatus('Context updated.');
+  }
+}
+
+function setDiagnosticsMode(next: DiagnosticsMode): void {
+  diagnosticsMode = next;
+  const consoleBtn = document.getElementById('diagModeConsoleBtn') as HTMLButtonElement | null;
+  const netBtn = document.getElementById('diagModeNetworkBtn') as HTMLButtonElement | null;
+  const consoleBlock = document.getElementById('consoleDiagBlock') as HTMLDivElement | null;
+  const netBlock = document.getElementById('netDiagBlock') as HTMLDivElement | null;
+
+  if (consoleBtn) consoleBtn.setAttribute('aria-pressed', next === 'console' ? 'true' : 'false');
+  if (netBtn) netBtn.setAttribute('aria-pressed', next === 'network' ? 'true' : 'false');
+  if (consoleBlock) consoleBlock.hidden = next !== 'console';
+  if (netBlock) netBlock.hidden = next !== 'network';
+
+  if (ctxDrawerOpen) {
+    if (next === 'console') void refreshConsoleCaptureView();
+    if (next === 'network') void refreshNetCaptureView();
+  }
 }
 
 function setCtxDrawerOpen(open: boolean) {
@@ -1779,6 +2203,14 @@ function setCtxDrawerOpen(open: boolean) {
     // Swap chevron direction by flipping the SVG via CSS class.
     toggleBtn.classList.toggle('isOpen', open);
     if (!open) toggleBtn.classList.remove('isReady');
+  }
+
+  if (open) {
+    if (diagnosticsMode === 'console') void refreshConsoleCaptureView();
+    if (diagnosticsMode === 'network') void refreshNetCaptureView();
+  } else {
+    stopConsolePolling();
+    stopNetPolling();
   }
 }
 
@@ -1825,17 +2257,59 @@ async function refreshModelTokenBudget(model: string): Promise<void> {
 
 async function prepareSendForPreview(userPrompt: string, model: string): Promise<PreparedSend> {
   const trimmed = userPrompt.trim();
+  const cleared = isContextClearedForCurrentTab();
+  const extra = (getDiagnosticsExtrasForCurrentTab() ?? '').trim();
 
-  // If both toggles are off, do not even ask the background to inject a content script.
-  if (!contextUiPrefs.includeSelection && !contextUiPrefs.includeExcerpt) {
+  if (cleared) {
+    if (!extra) {
+      return {
+        userPrompt: trimmed,
+        model,
+        finalPrompt: trimmed,
+        contextBlock: '',
+        ctx: null,
+        contextNote: 'Context cleared for this tab.',
+        contextAttached: false
+      };
+    }
+
+    const contextBlock = buildDiagnosticsOnlyContextBlock(extra, contextUiPrefs.maxChars);
+    const finalPrompt = trimmed ? buildPromptWithOptionalContext(trimmed, null, contextUiPrefs.maxChars, extra) : '';
     return {
       userPrompt: trimmed,
       model,
-      finalPrompt: trimmed,
-      contextBlock: '',
+      finalPrompt,
+      contextBlock,
       ctx: null,
-      contextNote: 'Context disabled.',
-      contextAttached: false
+      contextNote: 'Context cleared for this tab; attaching diagnostics only.',
+      contextAttached: true
+    };
+  }
+
+  // If both toggles are off, do not even ask the background to inject a content script.
+  if (!contextUiPrefs.includeSelection && !contextUiPrefs.includeExcerpt) {
+    if (!extra) {
+      return {
+        userPrompt: trimmed,
+        model,
+        finalPrompt: trimmed,
+        contextBlock: '',
+        ctx: null,
+        contextNote: 'Context disabled.',
+        contextAttached: false
+      };
+    }
+
+    const contextBlock = buildDiagnosticsOnlyContextBlock(extra, contextUiPrefs.maxChars);
+    const finalPrompt = trimmed ? buildPromptWithOptionalContext(trimmed, null, contextUiPrefs.maxChars, extra) : '';
+    return {
+      userPrompt: trimmed,
+      model,
+      finalPrompt,
+      contextBlock,
+      ctx: null,
+      contextNote: 'Page context disabled; attaching diagnostics only.',
+      contextAttached: true
     };
   }
 
@@ -1847,7 +2321,8 @@ async function prepareSendForPreview(userPrompt: string, model: string): Promise
     });
 
     const hasBody = Boolean((ctx.selection ?? '').trim() || (ctx.textExcerpt ?? '').trim());
-    if (!hasBody) {
+
+    if (!hasBody && !extra) {
       return {
         userPrompt: trimmed,
         model,
@@ -1859,16 +2334,16 @@ async function prepareSendForPreview(userPrompt: string, model: string): Promise
       };
     }
 
-    const contextBlock = buildContextBlock(ctx, contextUiPrefs.maxChars);
-    // Allow previewing context with an empty prompt, but don't pretend we have a final prompt.
-    const finalPrompt = trimmed ? buildPromptWithOptionalContext(trimmed, ctx, contextUiPrefs.maxChars) : '';
+    const contextBlock = hasBody ? buildContextBlock(ctx, contextUiPrefs.maxChars) : '';
+    const contextBlockWithExtras = buildContextBlockWithExtras(ctx, contextUiPrefs.maxChars, extra);
+    const finalPrompt = trimmed ? buildPromptWithOptionalContext(trimmed, ctx, contextUiPrefs.maxChars, extra) : '';
     return {
       userPrompt: trimmed,
       model,
       finalPrompt,
-      contextBlock,
+      contextBlock: contextBlockWithExtras,
       ctx,
-      contextNote: null,
+      contextNote: hasBody ? null : 'No selection/excerpt found; attaching diagnostics only.',
       contextAttached: true
     };
   } catch (e) {
@@ -1917,8 +2392,14 @@ function refreshCtxDrawerPromptOnly(): void {
   const trimmed = prompt.trim();
 
   const ctxText = ctxDrawerCache?.contextBlock || '(No context will be attached.)';
-  const finalPrompt = ctxDrawerCache?.ctx && trimmed
-    ? buildPromptWithOptionalContext(trimmed, ctxDrawerCache.ctx, contextUiPrefs.maxChars)
+  const hasAnyContext = Boolean(ctxDrawerCache?.ctx) || Boolean((getConsoleContextExtrasForCurrentTab() ?? '').trim());
+  const finalPrompt = hasAnyContext && trimmed
+    ? buildPromptWithOptionalContext(
+        trimmed,
+        ctxDrawerCache?.ctx ?? null,
+        contextUiPrefs.maxChars,
+        getConsoleContextExtrasForCurrentTab()
+      )
     : '';
   setCtxDrawerText(ctxText, finalPrompt || '(Empty prompt)');
   setCtxDrawerStatus(ctxDrawerCache?.contextNote ?? (ctxDrawerCache?.contextAttached ? 'Context will be attached.' : ''));
@@ -2119,8 +2600,27 @@ async function main() {
   const ctxSelEl = document.getElementById('ctxIncludeSelection') as HTMLInputElement | null;
   const ctxExEl = document.getElementById('ctxIncludeExcerpt') as HTMLInputElement | null;
   const ctxMaxEl = document.getElementById('ctxMaxChars') as HTMLInputElement | null;
+  const ctxClearBtn = document.getElementById('ctxClearBtn') as HTMLButtonElement | null;
   const ctxDrawerToggleBtn = document.getElementById('ctxDrawerToggleBtn') as HTMLButtonElement | null;
   const ctxDrawerCloseBtn = document.getElementById('ctxDrawerCloseBtn') as HTMLButtonElement | null;
+
+  const diagModeConsoleBtn = document.getElementById('diagModeConsoleBtn') as HTMLButtonElement | null;
+  const diagModeNetworkBtn = document.getElementById('diagModeNetworkBtn') as HTMLButtonElement | null;
+
+  const consoleCaptureToggleBtn = document.getElementById('consoleCaptureToggleBtn') as HTMLButtonElement | null;
+  const consoleCaptureAttachToContextBtn = document.getElementById(
+    'consoleCaptureAttachToContextBtn'
+  ) as HTMLButtonElement | null;
+  const consoleCaptureClearBtn = document.getElementById('consoleCaptureClearBtn') as HTMLButtonElement | null;
+  const consoleCaptureCopyBtn = document.getElementById('consoleCaptureCopyBtn') as HTMLButtonElement | null;
+
+  const netCaptureToggleBtn = document.getElementById('netCaptureToggleBtn') as HTMLButtonElement | null;
+  const netCaptureAttachToContextBtn = document.getElementById(
+    'netCaptureAttachToContextBtn'
+  ) as HTMLButtonElement | null;
+  const netCaptureClearBtn = document.getElementById('netCaptureClearBtn') as HTMLButtonElement | null;
+  const netCaptureCopyBtn = document.getElementById('netCaptureCopyBtn') as HTMLButtonElement | null;
+  const netCaptureIncludeBodiesEl = document.getElementById('netCaptureIncludeBodies') as HTMLInputElement | null;
 
   btn.addEventListener('click', () => void onSendRequested());
 
@@ -2180,6 +2680,16 @@ async function main() {
 
   // Context drawer toggle + close.
   setCtxDrawerOpen(false);
+
+  // Diagnostics mode (Console / Network).
+  setDiagnosticsMode('console');
+  if (diagModeConsoleBtn) {
+    diagModeConsoleBtn.addEventListener('click', () => setDiagnosticsMode('console'));
+  }
+  if (diagModeNetworkBtn) {
+    diagModeNetworkBtn.addEventListener('click', () => setDiagnosticsMode('network'));
+  }
+
   if (ctxDrawerToggleBtn) {
     ctxDrawerToggleBtn.addEventListener('click', () => {
       void (async () => {
@@ -2205,6 +2715,158 @@ async function main() {
     });
   }
 
+  // Diagnostics: active tab console capture.
+  if (consoleCaptureToggleBtn) {
+    consoleCaptureToggleBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          await toggleConsoleCapture();
+        } catch (e) {
+          setConsoleCaptureStatus(errorMessage(e));
+        }
+      })();
+    });
+  }
+
+  if (consoleCaptureAttachToContextBtn) {
+    consoleCaptureAttachToContextBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          setCtxDrawerOpen(true);
+          await attachConsoleLogsToContext();
+        } catch (e) {
+          setCtxDrawerStatus(errorMessage(e));
+        }
+      })();
+    });
+  }
+
+  if (consoleCaptureClearBtn) {
+    consoleCaptureClearBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          const tabId = getConsoleOpsTabId();
+          setConsoleCaptureStatus('');
+          const resp = await sendMessage({ type: 'TAB_CONSOLE_LOGS_CLEAR', tabId: tabId ?? undefined });
+          if (!resp.ok) throw new Error(formatError(resp));
+          if (resp.type !== 'TAB_CONSOLE_LOGS_CLEAR_RESULT') throw new Error('Unexpected response while clearing console logs');
+
+          // Also clear any previously attached console context.
+          consoleContextExtrasByTabKey.delete(getCurrentContextTabKey());
+          bumpConsoleContextVersionForCurrentTab();
+          ctxDrawerCache = null;
+
+          consoleLastRenderedCount = 0;
+          consoleLastRenderedTail = '';
+          setConsoleCaptureLogsText('(Cleared)');
+          await refreshConsoleCaptureView();
+
+          if (ctxDrawerOpen) {
+            await refreshCtxDrawerFromComposer();
+          }
+        } catch (e) {
+          setConsoleCaptureStatus(errorMessage(e));
+        }
+      })();
+    });
+  }
+  if (consoleCaptureCopyBtn) {
+    consoleCaptureCopyBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          const pre = document.getElementById('consoleCaptureLogs') as HTMLPreElement | null;
+          const text = (pre?.textContent ?? '').trim();
+          if (!text) return;
+          await navigator.clipboard.writeText(text);
+          setConsoleCaptureStatus('Copied to clipboard.');
+          setTimeout(() => setConsoleCaptureStatus(''), 1200);
+        } catch (e) {
+          setConsoleCaptureStatus(`Copy failed: ${errorMessage(e)}`);
+        }
+      })();
+    });
+  }
+
+  // Diagnostics: active tab network capture (fetch/XHR).
+  if (netCaptureIncludeBodiesEl) {
+    netCaptureIncludeBodiesEl.checked = netCaptureIncludeBodies;
+    netCaptureIncludeBodiesEl.addEventListener('change', () => {
+      netCaptureIncludeBodies = Boolean(netCaptureIncludeBodiesEl.checked);
+    });
+  }
+
+  if (netCaptureToggleBtn) {
+    netCaptureToggleBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          await toggleNetCapture();
+        } catch (e) {
+          setNetCaptureStatus(errorMessage(e));
+        }
+      })();
+    });
+  }
+
+  if (netCaptureAttachToContextBtn) {
+    netCaptureAttachToContextBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          setCtxDrawerOpen(true);
+          await attachNetLogsToContext();
+        } catch (e) {
+          setCtxDrawerStatus(errorMessage(e));
+        }
+      })();
+    });
+  }
+
+  if (netCaptureClearBtn) {
+    netCaptureClearBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          const tabId = getNetOpsTabId();
+          setNetCaptureStatus('');
+          const resp = await sendMessage({ type: 'TAB_NET_LOGS_CLEAR', tabId: tabId ?? undefined });
+          if (!resp.ok) throw new Error(formatError(resp));
+          if (resp.type !== 'TAB_NET_LOGS_CLEAR_RESULT') throw new Error('Unexpected response while clearing network logs');
+
+          // Also clear any previously attached network context.
+          netContextExtrasByTabKey.delete(getCurrentContextTabKey());
+          bumpNetContextVersionForCurrentTab();
+          ctxDrawerCache = null;
+
+          netLastRenderedCount = 0;
+          netLastRenderedTail = '';
+          setNetCaptureLogsText('(Cleared)');
+          await refreshNetCaptureView();
+
+          if (ctxDrawerOpen) {
+            await refreshCtxDrawerFromComposer();
+          }
+        } catch (e) {
+          setNetCaptureStatus(errorMessage(e));
+        }
+      })();
+    });
+  }
+
+  if (netCaptureCopyBtn) {
+    netCaptureCopyBtn.addEventListener('click', () => {
+      void (async () => {
+        try {
+          const pre = document.getElementById('netCaptureLogs') as HTMLPreElement | null;
+          const text = (pre?.textContent ?? '').trim();
+          if (!text) return;
+          await navigator.clipboard.writeText(text);
+          setNetCaptureStatus('Copied to clipboard.');
+          setTimeout(() => setNetCaptureStatus(''), 1200);
+        } catch (e) {
+          setNetCaptureStatus(`Copy failed: ${errorMessage(e)}`);
+        }
+      })();
+    });
+  }
+
   // Load + apply context UI prefs (stored locally, never page content).
   contextUiPrefs = await loadContextUiPrefs();
   if (ctxSelEl) ctxSelEl.checked = contextUiPrefs.includeSelection;
@@ -2214,11 +2876,37 @@ async function main() {
   setContextBadge(getBaseContextBadgeText(), true);
 
   const onContextPrefsChanged = () => {
+    // If the user tweaks context prefs, treat it as an intent to re-fetch context for this tab.
+    setContextClearedForCurrentTab(false);
     ctxDrawerCache = null;
     updateContextBudgetMeta();
     setContextBadge(getBaseContextBadgeText(), true);
     if (ctxDrawerOpen) void refreshCtxDrawerFromComposer();
   };
+
+  if (ctxClearBtn) {
+    ctxClearBtn.addEventListener('click', () => {
+      void (async () => {
+        // Per-tab clear: do not change global/persisted context preferences.
+        setContextClearedForCurrentTab(true);
+
+        // Also clear any attached diagnostics extras for this tab.
+        consoleContextExtrasByTabKey.delete(getCurrentContextTabKey());
+        bumpConsoleContextVersionForCurrentTab();
+        netContextExtrasByTabKey.delete(getCurrentContextTabKey());
+        bumpNetContextVersionForCurrentTab();
+
+        ctxDrawerCache = null;
+
+        if (ctxDrawerOpen) {
+          await refreshCtxDrawerFromComposer();
+          setCtxDrawerStatus('Context cleared for this tab.');
+        } else {
+          setCtxDrawerStatus('');
+        }
+      })();
+    });
+  }
 
   if (ctxSelEl) {
     ctxSelEl.addEventListener('change', () => {

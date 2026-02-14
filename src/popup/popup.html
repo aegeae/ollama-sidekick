@@ -201,6 +201,8 @@
                 Excerpt
               </label>
 
+              <button id="ctxClearBtn" class="miniBtn" type="button" title="Disable context">Clear context</button>
+
               <label class="ctxBudget">
                 Budget
                 <input
@@ -226,6 +228,61 @@
             <div class="previewSection">
               <div class="previewLabel">Final prompt</div>
               <pre id="ctxDrawerPrompt" class="previewPre" aria-label="Final prompt preview"></pre>
+            </div>
+
+            <div id="diagnosticsSection" class="previewSection" aria-label="Diagnostics">
+              <div class="previewLabel">Diagnostics</div>
+
+              <div class="contextDrawerControls" aria-label="Diagnostics mode">
+                <button id="diagModeConsoleBtn" class="miniBtn" type="button" aria-pressed="true">Console</button>
+                <button id="diagModeNetworkBtn" class="miniBtn" type="button" aria-pressed="false">Network</button>
+              </div>
+
+              <div id="consoleDiagBlock">
+                <div class="contextDrawerControls" aria-label="Console capture controls">
+                  <button id="consoleCaptureToggleBtn" class="miniBtn" type="button" aria-label="Capture console output from active tab">
+                    Capture console
+                  </button>
+                  <button id="consoleCaptureAttachToContextBtn" class="miniBtn" type="button" title="Attach captured diagnostics to context">
+                    Attach to context
+                  </button>
+                  <button id="consoleCaptureClearBtn" class="miniBtn" type="button">Clear logs</button>
+                  <button id="consoleCaptureCopyBtn" class="miniBtn" type="button">Copy logs</button>
+                  <span id="consoleCaptureMeta" class="ctxMeta" aria-live="polite"></span>
+                </div>
+
+                <pre id="consoleCaptureLogs" class="previewPre" aria-label="Console logs"></pre>
+
+                <div class="contextDrawerStatusRow">
+                  <span id="consoleCaptureStatus" class="modalStatus" aria-live="polite"></span>
+                </div>
+              </div>
+
+              <div id="netDiagBlock" hidden>
+                <div class="contextDrawerControls" aria-label="Network capture controls">
+                  <button id="netCaptureToggleBtn" class="miniBtn" type="button" aria-label="Capture fetch/XHR requests from active tab">
+                    Capture requests
+                  </button>
+                  <button id="netCaptureAttachToContextBtn" class="miniBtn" type="button" title="Attach captured diagnostics to context">
+                    Attach to context
+                  </button>
+                  <button id="netCaptureClearBtn" class="miniBtn" type="button">Clear requests</button>
+                  <button id="netCaptureCopyBtn" class="miniBtn" type="button">Copy requests</button>
+
+                  <label class="ctxToggle" title="Capturing request/response bodies may include sensitive data">
+                    <input id="netCaptureIncludeBodies" type="checkbox" />
+                    Include bodies
+                  </label>
+
+                  <span id="netCaptureMeta" class="ctxMeta" aria-live="polite"></span>
+                </div>
+
+                <pre id="netCaptureLogs" class="previewPre" aria-label="HTTP requests"></pre>
+
+                <div class="contextDrawerStatusRow">
+                  <span id="netCaptureStatus" class="modalStatus" aria-live="polite"></span>
+                </div>
+              </div>
             </div>
 
             <div class="contextDrawerStatusRow">

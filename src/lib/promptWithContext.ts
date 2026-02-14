@@ -9,6 +9,14 @@ function clip(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
 }
 
+export function buildDiagnosticsOnlyContextBlock(extras: string, maxBodyChars = 2000): string {
+  const extraText = String(extras ?? '').trim();
+  if (!extraText) return '';
+  const budget = Number.isFinite(maxBodyChars) ? Math.max(0, Math.floor(maxBodyChars)) : 2000;
+  const clipped = clip(extraText, budget);
+  return ['Context (diagnostics):', '', '```', clipped, '```', ''].join('\n');
+}
+
 export function buildContextBlock(ctx: TabContextLike, maxBodyChars = 2000): string {
   const selection = (ctx.selection ?? '').trim();
   const excerpt = (ctx.textExcerpt ?? '').trim();
@@ -28,12 +36,39 @@ export function buildContextBlock(ctx: TabContextLike, maxBodyChars = 2000): str
   ].join('\n');
 }
 
+export function buildContextBlockWithExtras(ctx: TabContextLike, maxBodyChars = 2000, extras?: string | null): string {
+  const selection = (ctx.selection ?? '').trim();
+  const excerpt = (ctx.textExcerpt ?? '').trim();
+  const baseBody = selection || excerpt || '';
+  const extraText = (extras ?? '').trim();
+  const budget = Number.isFinite(maxBodyChars) ? Math.max(0, Math.floor(maxBodyChars)) : 2000;
+
+  const combinedBody = extraText ? [baseBody, '', extraText].join('\n') : baseBody;
+  const clipped = clip(combinedBody, budget);
+
+  return [
+    'Context (active tab):',
+    `Title: ${ctx.title ?? ''}`,
+    `URL: ${ctx.url ?? ''}`,
+    '',
+    '```',
+    clipped,
+    '```',
+    ''
+  ].join('\n');
+}
+
 export function buildPromptWithOptionalContext(
   userPrompt: string,
   ctx?: TabContextLike | null,
-  maxBodyChars = 2000
+  maxBodyChars = 2000,
+  extras?: string | null
 ): string {
   const prompt = String(userPrompt ?? '');
-  if (!ctx) return prompt;
-  return buildContextBlock(ctx, maxBodyChars) + prompt;
+  const extraText = (extras ?? '').trim();
+  if (!ctx) {
+    if (!extraText) return prompt;
+    return buildDiagnosticsOnlyContextBlock(extraText, maxBodyChars) + prompt;
+  }
+  return buildContextBlockWithExtras(ctx, maxBodyChars, extras) + prompt;
 }

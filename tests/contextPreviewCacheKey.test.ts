@@ -28,6 +28,28 @@ test('buildContextPreviewCacheKey changes with tabId/prefs/budget', () => {
     base,
     buildContextPreviewCacheKey({ tabId: 123, includeSelection: true, includeExcerpt: false, maxChars: 2500 })
   );
+
+  assert.notEqual(
+    base,
+    buildContextPreviewCacheKey({
+      tabId: 123,
+      includeSelection: true,
+      includeExcerpt: false,
+      maxChars: 2000,
+      contextCleared: true
+    })
+  );
+
+  assert.notEqual(
+    base,
+    buildContextPreviewCacheKey({
+      tabId: 123,
+      includeSelection: true,
+      includeExcerpt: false,
+      maxChars: 2000,
+      netContextVersion: 1
+    })
+  );
 });
 
 test('buildContextPreviewCacheKey treats invalid tabId as active', () => {

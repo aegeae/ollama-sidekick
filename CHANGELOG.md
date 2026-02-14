@@ -1,3 +1,9 @@
+## [0.11.0](https://github.com/aegeae/ollama-sidekick/compare/v0.10.0...v0.11.0) (2026-02-14)
+
+### Features
+
+* **popup:** show target tab indicator ([4932458](https://github.com/aegeae/ollama-sidekick/commit/4932458c77ad351820090c8f01c114afdbbc7eed))
+
 ## [0.10.0](https://github.com/aegeae/ollama-sidekick/compare/v0.9.0...v0.10.0) (2026-02-14)
 
 ### Features

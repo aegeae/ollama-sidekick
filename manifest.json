@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Ollama Sidekick",
   "short_name": "Sidekick",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Chat with local Ollama models, optionally using the current page as context.",
   "permissions": [
     "storage",

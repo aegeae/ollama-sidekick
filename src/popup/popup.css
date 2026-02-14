@@ -1,6 +1,16 @@
 :root {
   color-scheme: dark;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+
+  /* Sizing tokens (easy to tweak) */
+  --popup-width: 380px;
+  --popup-min-width: 360px;
+  --popup-height: 600px;
+  --popup-min-height: 420px;
+  --chat-padding: 12px;
+  --composer-min-height: 40px;
+  --composer-max-height: 160px;
+  --resize-bar-height: 12px;
 }
 
 * {
@@ -12,17 +22,76 @@ body {
   height: 100%;
 }
 
+html {
+  width: var(--popup-width);
+  height: var(--popup-height);
+}
+
 body {
   margin: 0;
-  min-width: 360px;
+  width: var(--popup-width);
+  min-width: var(--popup-min-width);
+  height: var(--popup-height);
+  min-height: var(--popup-min-height);
   background: #0b0f14;
   color: #e6edf3;
 }
 
 .app {
-  height: 600px;
+  height: var(--popup-height);
+  width: var(--popup-width);
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr var(--resize-bar-height) auto;
+}
+
+.resizeBar {
+  position: relative;
+  height: var(--resize-bar-height);
+  cursor: ns-resize;
+  z-index: 5;
+  touch-action: none;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.015);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.resizeBar:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.resizeGrip {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 24px;
+  height: 100%;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+body.resizing {
+  user-select: none;
+  cursor: ns-resize;
+}
+
+body.resizing.both {
+  cursor: nwse-resize;
+}
+
+.resizeGrip::before {
+  content: '';
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateY(-50%);
+  background:
+    linear-gradient(135deg, transparent 50%, rgba(230, 237, 243, 0.20) 50%) 0 0 / 6px 6px,
+    linear-gradient(135deg, transparent 50%, rgba(230, 237, 243, 0.14) 50%) 3px 3px / 6px 6px;
+  border-radius: 4px;
+  opacity: 0.85;
 }
 
 .topbar {
@@ -30,6 +99,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
   padding: 10px 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.02);
@@ -42,6 +112,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .badge {
@@ -59,6 +131,10 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .miniBtn {
@@ -136,6 +212,7 @@ body {
 
 .model {
   max-width: 200px;
+  min-width: 140px;
   font-size: 12px;
   padding: 6px 8px;
   border-radius: 10px;
@@ -160,7 +237,7 @@ body {
 }
 
 .chat {
-  padding: 12px;
+  padding: var(--chat-padding);
   overflow: auto;
 }
 
@@ -187,7 +264,9 @@ body {
   background: rgba(255, 255, 255, 0.03);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
+  min-width: 0;
 }
 
 .role-user .bubble {
@@ -213,6 +292,7 @@ body {
 .text {
   line-height: 1.35;
   font-size: 12.5px;
+  overflow-wrap: anywhere;
 }
 
 .code {
@@ -238,6 +318,9 @@ body {
 .prompt {
   width: 100%;
   resize: none;
+  min-height: var(--composer-min-height);
+  max-height: var(--composer-max-height);
+  min-width: 0;
   padding: 10px 10px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);

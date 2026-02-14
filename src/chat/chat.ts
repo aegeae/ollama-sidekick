@@ -106,10 +106,18 @@ function setGenerating(isGenerating: boolean) {
   btn.classList.toggle('isLoading', isGenerating);
 }
 
+function getMaxHeightPx(el: HTMLElement): number | null {
+  const maxHeight = getComputedStyle(el).maxHeight;
+  if (!maxHeight || maxHeight === 'none') return null;
+  const px = Number.parseFloat(maxHeight);
+  return Number.isFinite(px) ? px : null;
+}
+
 function autoGrowTextarea(el: HTMLTextAreaElement) {
   el.style.height = 'auto';
-  const max = 220;
-  el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  const max = getMaxHeightPx(el);
+  const height = max == null ? el.scrollHeight : Math.min(el.scrollHeight, max);
+  el.style.height = `${height}px`;
 }
 
 async function loadModels() {
@@ -156,6 +164,40 @@ function getQueryPrompt(): { prompt: string; auto: boolean } {
   };
 }
 
+function isPopoutWindow(): boolean {
+  const url = new URL(location.href);
+  return url.searchParams.get('popout') === '1';
+}
+
+function startPopoutBoundsPersistence() {
+  if (!isPopoutWindow()) return;
+
+  const save = () => {
+    chrome.windows.getCurrent((win) => {
+      if (!win) return;
+      const left = typeof win.left === 'number' ? win.left : undefined;
+      const top = typeof win.top === 'number' ? win.top : undefined;
+      const width = typeof win.width === 'number' ? win.width : undefined;
+      const height = typeof win.height === 'number' ? win.height : undefined;
+      if (left == null || top == null || width == null || height == null) return;
+      void chrome.storage.local.set({
+        chatWinLeft: left,
+        chatWinTop: top,
+        chatWinWidth: width,
+        chatWinHeight: height
+      });
+    });
+  };
+
+  // Polling is simplest; resize/move events are not consistently exposed.
+  save();
+  const t = window.setInterval(save, 1500);
+  window.addEventListener('beforeunload', () => {
+    window.clearInterval(t);
+    save();
+  });
+}
+
 async function onGenerate() {
   if (state.generating) return;
 
@@ -193,6 +235,8 @@ async function onGenerate() {
 async function main() {
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
+
+  startPopoutBoundsPersistence();
 
   btn.addEventListener('click', () => void onGenerate());
   promptEl.addEventListener('input', () => autoGrowTextarea(promptEl));

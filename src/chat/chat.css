@@ -1,5 +1,9 @@
 @import url("../popup/popup.css");
 
+:root {
+  --composer-max-height: 220px;
+}
+
 /* In a tab, fill the viewport instead of a fixed popup height */
 .app {
   height: 100vh;
@@ -7,4 +11,6 @@
 
 body {
   min-width: 0;
+  width: auto;
+  height: auto;
 }

@@ -40,6 +40,11 @@ This produces `dist/` which you can load as an unpacked extension.
 - If model list fails to load, confirm Ollama is reachable at `http://localhost:11434`
 - Configure base URL / default model via **Options**
 
+### Popup resize / move
+
+- The extension action popup is controlled by the browser UI, so it cannot be freely dragged to a different location.
+- Use **Pop out** to open a movable + resizable chat window.
+
 ### Use current tab as context
 
 In the popup:

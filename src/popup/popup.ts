@@ -11,6 +11,59 @@ async function sendMessage(message: BackgroundRequest): Promise<BackgroundRespon
   return await chrome.runtime.sendMessage(message);
 }
 
+type PopupSize = { width: number; height: number };
+type WindowBounds = { left: number; top: number; width: number; height: number };
+
+const POPUP_SIZE_DEFAULT: PopupSize = { width: 380, height: 600 };
+const POPUP_SIZE_MIN: PopupSize = { width: 360, height: 420 };
+const POPUP_SIZE_MAX: PopupSize = { width: 640, height: 900 };
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+async function getSavedChatWindowBounds(): Promise<WindowBounds | null> {
+  const data = await chrome.storage.local.get(['chatWinLeft', 'chatWinTop', 'chatWinWidth', 'chatWinHeight']);
+  const left = typeof data.chatWinLeft === 'number' ? data.chatWinLeft : null;
+  const top = typeof data.chatWinTop === 'number' ? data.chatWinTop : null;
+  const width = typeof data.chatWinWidth === 'number' ? data.chatWinWidth : null;
+  const height = typeof data.chatWinHeight === 'number' ? data.chatWinHeight : null;
+  if (left == null || top == null || width == null || height == null) return null;
+  return { left, top, width, height };
+}
+
+async function getSavedPopupSize(): Promise<PopupSize | null> {
+  const data = await chrome.storage.local.get(['popupWidth', 'popupHeight']);
+  const width = typeof data.popupWidth === 'number' ? data.popupWidth : null;
+  const height = typeof data.popupHeight === 'number' ? data.popupHeight : null;
+  if (width == null || height == null) return null;
+  return { width, height };
+}
+
+async function savePopupSize(size: PopupSize): Promise<void> {
+  await chrome.storage.local.set({ popupWidth: size.width, popupHeight: size.height });
+}
+
+function applyPopupSize(size: PopupSize) {
+  const width = clamp(Math.round(size.width), POPUP_SIZE_MIN.width, POPUP_SIZE_MAX.width);
+  const height = clamp(Math.round(size.height), POPUP_SIZE_MIN.height, POPUP_SIZE_MAX.height);
+
+  document.documentElement.style.setProperty('--popup-width', `${width}px`);
+  document.documentElement.style.setProperty('--popup-height', `${height}px`);
+
+  // Extra forcing for extension popup sizing behavior.
+  document.documentElement.style.width = `${width}px`;
+  document.documentElement.style.height = `${height}px`;
+  document.body.style.width = `${width}px`;
+  document.body.style.height = `${height}px`;
+
+  const app = document.querySelector('.app') as HTMLElement | null;
+  if (app) {
+    app.style.width = `${width}px`;
+    app.style.height = `${height}px`;
+  }
+}
+
 function formatError(resp: Extract<BackgroundResponse, { ok: false }>): string {
   const parts: string[] = [resp.error.message];
   if (resp.error.status) parts.push(`Status: ${resp.error.status}`);
@@ -116,10 +169,175 @@ function setGenerating(isGenerating: boolean) {
   btn.classList.toggle('isLoading', isGenerating);
 }
 
+function getMaxHeightPx(el: HTMLElement): number | null {
+  const maxHeight = getComputedStyle(el).maxHeight;
+  if (!maxHeight || maxHeight === 'none') return null;
+  const px = Number.parseFloat(maxHeight);
+  return Number.isFinite(px) ? px : null;
+}
+
+function getCssVarPx(name: string): number | null {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (!raw) return null;
+  if (raw.endsWith('px')) {
+    const px = Number.parseFloat(raw);
+    return Number.isFinite(px) ? px : null;
+  }
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function getCurrentPopupSize(): PopupSize {
+  const app = document.querySelector('.app') as HTMLElement | null;
+  const rect = app?.getBoundingClientRect();
+  const rectWidth = rect && rect.width > 0 ? rect.width : null;
+  const rectHeight = rect && rect.height > 0 ? rect.height : null;
+  return {
+    width: getCssVarPx('--popup-width') ?? rectWidth ?? document.body.getBoundingClientRect().width ?? POPUP_SIZE_DEFAULT.width,
+    height: getCssVarPx('--popup-height') ?? rectHeight ?? document.body.getBoundingClientRect().height ?? POPUP_SIZE_DEFAULT.height
+  };
+}
+
+function setupPopupResize() {
+  const bar = document.getElementById('resizeBar') as HTMLDivElement | null;
+  if (!bar) return;
+  const grip = document.getElementById('resizeGrip') as HTMLDivElement | null;
+
+  type Mode = 'height' | 'width' | 'both';
+
+  const finish = () => {
+    document.body.classList.remove('resizing', 'both');
+    const size = getCurrentPopupSize();
+    void savePopupSize({
+      width: clamp(Math.round(size.width), POPUP_SIZE_MIN.width, POPUP_SIZE_MAX.width),
+      height: clamp(Math.round(size.height), POPUP_SIZE_MIN.height, POPUP_SIZE_MAX.height)
+    });
+  };
+
+  const startDrag = (mode: Mode, startX: number, startY: number) => {
+    const start = getCurrentPopupSize();
+    document.body.classList.add('resizing');
+    if (mode === 'both') document.body.classList.add('both');
+
+    const onMove = (clientX: number, clientY: number) => {
+      const dx = clientX - startX;
+      const dy = clientY - startY;
+      applyPopupSize({
+        width: mode === 'width' || mode === 'both' ? start.width + dx : start.width,
+        height: mode === 'height' || mode === 'both' ? start.height + dy : start.height
+      });
+    };
+
+    // Mouse fallback (most reliable in extension popups)
+    const onMouseMove = (ev: MouseEvent) => onMove(ev.clientX, ev.clientY);
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove, true);
+      window.removeEventListener('mouseup', onMouseUp, true);
+      finish();
+    };
+
+    window.addEventListener('mousemove', onMouseMove, true);
+    window.addEventListener('mouseup', onMouseUp, true);
+  };
+
+  const onBarMouseDown = (ev: MouseEvent) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+
+    const edge = 28;
+    const inRightEdge = ev.offsetX >= bar.clientWidth - edge;
+    const mode: Mode = ev.shiftKey ? 'both' : inRightEdge ? 'width' : 'height';
+    startDrag(mode, ev.clientX, ev.clientY);
+  };
+
+  const onGripMouseDown = (ev: MouseEvent) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    startDrag('both', ev.clientX, ev.clientY);
+  };
+
+  // Pointer events for touch / trackpads.
+  const onPointerDown = (mode: Mode) => (ev: PointerEvent) => {
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    ev.preventDefault();
+
+    const startX = ev.clientX;
+    const startY = ev.clientY;
+    const start = getCurrentPopupSize();
+    document.body.classList.add('resizing');
+    if (mode === 'both') document.body.classList.add('both');
+
+    const target = ev.currentTarget as HTMLElement;
+    try {
+      target.setPointerCapture(ev.pointerId);
+    } catch {
+      // ignore
+    }
+
+    const onMove = (moveEv: PointerEvent) => {
+      const dx = moveEv.clientX - startX;
+      const dy = moveEv.clientY - startY;
+      applyPopupSize({
+        width: mode === 'width' || mode === 'both' ? start.width + dx : start.width,
+        height: mode === 'height' || mode === 'both' ? start.height + dy : start.height
+      });
+    };
+
+    const onUp = (upEv: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      try {
+        target.releasePointerCapture(upEv.pointerId);
+      } catch {
+        // ignore
+      }
+      finish();
+    };
+
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+  };
+
+  bar.addEventListener('mousedown', onBarMouseDown);
+  bar.addEventListener('pointerdown', (ev) => {
+    const edge = 28;
+    const mode: Mode = ev.shiftKey ? 'both' : ev.offsetX >= bar.clientWidth - edge ? 'width' : 'height';
+    onPointerDown(mode)(ev);
+  });
+  if (grip) {
+    grip.addEventListener('mousedown', onGripMouseDown);
+    grip.addEventListener('pointerdown', onPointerDown('both'));
+  }
+}
+
+async function openPopoutWindow() {
+  const bounds = (await getSavedChatWindowBounds()) ?? {
+    left: 80,
+    top: 80,
+    ...getCurrentPopupSize()
+  };
+
+  const url = new URL(chrome.runtime.getURL('src/chat/chat.html'));
+  url.searchParams.set('popout', '1');
+
+  await chrome.windows.create({
+    url: url.toString(),
+    type: 'popup',
+    left: Math.round(bounds.left),
+    top: Math.round(bounds.top),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height)
+  });
+}
+
 function autoGrowTextarea(el: HTMLTextAreaElement) {
   el.style.height = 'auto';
-  const max = 160; // px
-  el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  const max = getMaxHeightPx(el);
+  const height = max == null ? el.scrollHeight : Math.min(el.scrollHeight, max);
+  el.style.height = `${height}px`;
 }
 
 function setContextBadge(text: string, visible: boolean) {
@@ -270,12 +488,20 @@ async function onGenerate() {
 }
 
 async function main() {
+  applyPopupSize((await getSavedPopupSize()) ?? POPUP_SIZE_DEFAULT);
+  setupPopupResize();
+
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
   const useContextToggle = document.getElementById('useContextToggle') as HTMLInputElement | null;
   const insertBtn = document.getElementById('insertSelectionBtn') as HTMLButtonElement | null;
+  const popoutBtn = document.getElementById('popoutBtn') as HTMLButtonElement | null;
 
   btn.addEventListener('click', () => void onGenerate());
+
+  if (popoutBtn) {
+    popoutBtn.addEventListener('click', () => void openPopoutWindow());
+  }
 
   promptEl.addEventListener('input', () => autoGrowTextarea(promptEl));
   promptEl.addEventListener('keydown', (ev) => {

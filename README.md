@@ -108,28 +108,24 @@ The unit tests are intentionally browser-free: regression-prone logic is kept in
 
 ## Versioning / release
 
-- `npm run release:patch` (or `release:minor` / `release:major`) bumps versions in `package.json` + `manifest.json` and then builds.
+This repo uses **semantic-release** on protected `main`.
 
-### Protected `main` auto-release
+On push/merge to `main`, GitHub Actions:
 
-This repo treats `main` as a protected release branch. On each push/merge to `main`, GitHub Actions will:
+- Computes the next SemVer bump from Conventional Commit messages (`feat`/`fix`/breaking)
+- Updates `CHANGELOG.md`
+- Bumps `package.json` + `manifest.json` (kept in sync)
+- Creates a tag `vX.Y.Z`
+- Creates a GitHub Release and attaches `ollama-sidekick.zip`
 
-- Compute a SemVer bump from Conventional Commit messages (`feat`/`fix`/breaking)
-- Bump `package.json` + `manifest.json`
-- Create and push a tag `vX.Y.Z`
+Details and required GitHub settings are in [RELEASING.md](RELEASING.md).
 
-The tag push then triggers the existing tag-based release workflow to build and upload `ollama-sidekick.zip`.
+## Docs
 
-Details and required GitHub settings (branch protection + allowing Actions to push) are in [docs/RELEASING.md](docs/RELEASING.md).
-
-### GitHub Release (tag)
-
-- Create a tag like `v0.1.0` and push it; GitHub Actions will attach `ollama-sidekick.zip` to a GitHub Release.
-- Example:
-  - `git tag v0.1.0`
-  - `git push origin v0.1.0`
-
-Note: the badge will start working after the first push.
+- [docs/USAGE.md](docs/USAGE.md)
+- [docs/SETTINGS.md](docs/SETTINGS.md)
+- [docs/PRIVACY.md](docs/PRIVACY.md)
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Notes / Troubleshooting
 

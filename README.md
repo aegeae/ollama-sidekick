@@ -1,5 +1,7 @@
 # Ollama Sidekick
 
+![CI](https://github.com/aegeae/ollama-sidekick/actions/workflows/ci.yml/badge.svg)
+
 A minimal Brave/Chrome (Manifest V3) extension that chats with local Ollama.
 
 ## Branding
@@ -78,6 +80,15 @@ Nothing is persisted by default; context is only extracted on user action.
 
 - `npm run release:patch` (or `release:minor` / `release:major`) bumps versions in `package.json` + `manifest.json` and then builds.
 
+### GitHub Release (tag)
+
+- Create a tag like `v0.1.0` and push it; GitHub Actions will attach `ollama-sidekick.zip` to a GitHub Release.
+- Example:
+  - `git tag v0.1.0`
+  - `git push origin v0.1.0`
+
+Note: the badge will start working after the first push.
+
 ## Notes / Troubleshooting
 
 - The extension requests host permissions for:
@@ -96,6 +107,10 @@ Nothing is persisted by default; context is only extracted on user action.
 - Privacy policy: `PRIVACY_POLICY.md`
 - Listing copy + permissions justification: `STORE_LISTING.md`
 - Submission checklist: `STORE_CHECKLIST.md`
+
+## License
+
+MIT — see `LICENSE`.
 
 ### HTTP 403 Forbidden
 

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Detect optional scripts
+        id: scripts
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const scripts = pkg.scripts || {};
+          const has = (name) => Object.prototype.hasOwnProperty.call(scripts, name);
+          const out = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(out, `has_lint=${has('lint')}\n`);
+          fs.appendFileSync(out, `has_test=${has('test')}\n`);
+          NODE
+
+      - name: Lint (optional)
+        if: steps.scripts.outputs.has_lint == 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (optional)
+        if: steps.scripts.outputs.has_test == 'true'
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error

@@ -18,6 +18,10 @@ The workflow looks at commit messages since the latest `v*` tag:
 - **PATCH** if any commit subject starts with `fix:` (or `fix(scope):`)
 - **NONE** if none of the above match → no bump and no tag
 
+### Bootstrap (first tag)
+
+If there are **no** existing `v*` tags yet, automation will create an initial tag `v<package.json version>` (for example `v0.1.0`) so that tags align with the extension’s current version.
+
 Only **one** new tag is created per push to `main` (based on all commits in that push).
 
 ## Required GitHub settings (branch protection)

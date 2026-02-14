@@ -56,12 +56,12 @@ jobs:
         run: node scripts/next-version.mjs --github-output
 
       - name: No bump needed
-        if: steps.next.outputs.bump == 'none'
+        if: steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base != 'true'
         run: echo "No version bump needed; exiting."
 
       - name: Check if tag already exists
         id: tagcheck
-        if: steps.next.outputs.bump != 'none'
+        if: steps.next.outputs.bump != 'none' || steps.next.outputs.should_tag_base == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -72,6 +72,18 @@ jobs:
           else
             echo "tag_exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Bootstrap tag only (no version bump)
+        if: steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          TAG="${{ steps.next.outputs.tag }}"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+          echo "Bootstrapped initial tag $TAG"
 
       - name: Apply version to package + manifest
         if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'

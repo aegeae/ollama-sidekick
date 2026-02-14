@@ -1,5 +1,5 @@
 import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
-import { getSettings } from '../lib/settings';
+import { DEFAULT_SETTINGS, getSettings, setSettings, type Settings } from '../lib/settings';
 
 function $(id: string) {
   const el = document.getElementById(id);
@@ -20,6 +20,31 @@ const POPUP_SIZE_MAX: PopupSize = { width: 640, height: 900 };
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+function applyUiSettings(settings: Settings) {
+  document.documentElement.dataset.theme = settings.theme;
+
+  const fontFamily =
+    settings.fontFamily === 'mono'
+      ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+      : settings.fontFamily === 'serif'
+        ? 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif'
+        : settings.fontFamily === 'sans'
+          ? 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
+          : 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+
+  document.documentElement.style.setProperty('--ui-font-family', fontFamily);
+  document.documentElement.style.setProperty('--ui-font-size', `${settings.fontSize}px`);
+}
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 async function getSavedChatWindowBounds(): Promise<WindowBounds | null> {
@@ -162,10 +187,8 @@ function setGenerating(isGenerating: boolean) {
   state.generating = isGenerating;
   const btn = $('generateBtn') as HTMLButtonElement;
   const prompt = $('prompt') as HTMLTextAreaElement;
-  const insertBtn = document.getElementById('insertSelectionBtn') as HTMLButtonElement | null;
   btn.disabled = isGenerating;
   prompt.disabled = isGenerating;
-  if (insertBtn) insertBtn.disabled = isGenerating;
   btn.classList.toggle('isLoading', isGenerating);
 }
 
@@ -333,6 +356,142 @@ async function openPopoutWindow() {
   });
 }
 
+function setupSettingsModal(onSaved: () => void) {
+  const overlay = document.getElementById('settingsOverlay') as HTMLDivElement | null;
+  const openBtn = document.getElementById('settingsBtn') as HTMLButtonElement | null;
+  const closeBtn = document.getElementById('settingsCloseBtn') as HTMLButtonElement | null;
+  const cancelBtn = document.getElementById('settingsCancelBtn') as HTMLButtonElement | null;
+  const saveBtn = document.getElementById('settingsSaveBtn') as HTMLButtonElement | null;
+  const resetBtn = document.getElementById('settingsResetBtn') as HTMLButtonElement | null;
+  const statusEl = document.getElementById('settingsStatus') as HTMLSpanElement | null;
+
+  const baseUrlEl = document.getElementById('settingsBaseUrl') as HTMLInputElement | null;
+  const modelEl = document.getElementById('settingsModel') as HTMLInputElement | null;
+  const themeEl = document.getElementById('settingsTheme') as HTMLSelectElement | null;
+  const fontEl = document.getElementById('settingsFontFamily') as HTMLSelectElement | null;
+  const sizeEl = document.getElementById('settingsFontSize') as HTMLInputElement | null;
+
+  if (!overlay || !openBtn || !closeBtn || !cancelBtn || !saveBtn || !resetBtn) return;
+  if (!baseUrlEl || !modelEl || !themeEl || !fontEl || !sizeEl || !statusEl) return;
+
+  let lastLoaded: Settings | null = null;
+
+  const setStatus = (text: string) => {
+    statusEl.textContent = text;
+  };
+
+  const populate = async () => {
+    const s = await getSettings();
+    lastLoaded = s;
+    baseUrlEl.value = s.baseUrl;
+    modelEl.value = s.model;
+    themeEl.value = s.theme;
+    fontEl.value = s.fontFamily;
+    sizeEl.value = String(s.fontSize);
+  };
+
+  const open = async () => {
+    setStatus('');
+    await populate();
+    overlay.hidden = false;
+    overlay.style.display = 'grid';
+    baseUrlEl.focus();
+    baseUrlEl.select();
+  };
+
+  const close = () => {
+    overlay.hidden = true;
+    overlay.style.display = 'none';
+    setStatus('');
+    openBtn.focus();
+  };
+
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) close();
+  });
+
+  document.addEventListener('keydown', (ev) => {
+    if (overlay.hidden) return;
+    if (ev.key === 'Escape') close();
+  });
+
+  // Ensure hidden overlays are not accidentally left visible due to CSS.
+  overlay.style.display = overlay.hidden ? 'none' : 'grid';
+
+  openBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    void open();
+  });
+  closeBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    close();
+  });
+  cancelBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    close();
+  });
+
+  saveBtn.addEventListener('click', () => {
+    setStatus('');
+    saveBtn.disabled = true;
+
+    Promise.resolve()
+      .then(async () => {
+        const baseUrl = baseUrlEl.value.trim();
+        const model = modelEl.value.trim();
+        const theme = themeEl.value as Settings['theme'];
+        const fontFamily = fontEl.value as Settings['fontFamily'];
+        const fontSize = Number.parseInt(sizeEl.value, 10);
+
+        if (!baseUrl || !isValidHttpUrl(baseUrl)) throw new Error('Base URL must be http(s)://…');
+        if (!model) throw new Error('Default model cannot be empty');
+        if (!Number.isFinite(fontSize) || fontSize < 11 || fontSize > 20) throw new Error('Font size must be 11–20');
+
+        await setSettings({ baseUrl, model, theme, fontFamily, fontSize });
+        const s = await getSettings();
+        lastLoaded = s;
+        applyUiSettings(s);
+        onSaved();
+        // Close immediately after saving to keep the popup uncluttered.
+        close();
+      })
+      .catch((e) => {
+        setStatus(String((e as any)?.message ?? e));
+      })
+      .finally(() => {
+        saveBtn.disabled = false;
+      });
+  });
+
+  resetBtn.addEventListener('click', () => {
+    setStatus('');
+    resetBtn.disabled = true;
+
+    Promise.resolve()
+      .then(async () => {
+        await setSettings(DEFAULT_SETTINGS);
+        const s = await getSettings();
+        lastLoaded = s;
+        applyUiSettings(s);
+        onSaved();
+
+        baseUrlEl.value = s.baseUrl;
+        modelEl.value = s.model;
+        themeEl.value = s.theme;
+        fontEl.value = s.fontFamily;
+        sizeEl.value = String(s.fontSize);
+        setStatus('Reset.');
+      })
+      .catch((e) => setStatus(String((e as any)?.message ?? e)))
+      .finally(() => {
+        resetBtn.disabled = false;
+      });
+  });
+}
+
 function autoGrowTextarea(el: HTMLTextAreaElement) {
   el.style.height = 'auto';
   const max = getMaxHeightPx(el);
@@ -370,16 +529,6 @@ function buildContextBlock(ctx: TabContext): string {
     '```',
     ''
   ].join('\n');
-}
-
-function insertAtCursor(textarea: HTMLTextAreaElement, text: string) {
-  const start = textarea.selectionStart ?? textarea.value.length;
-  const end = textarea.selectionEnd ?? textarea.value.length;
-  const before = textarea.value.slice(0, start);
-  const after = textarea.value.slice(end);
-  textarea.value = before + text + after;
-  const newPos = start + text.length;
-  textarea.selectionStart = textarea.selectionEnd = newPos;
 }
 
 async function loadModels() {
@@ -491,10 +640,12 @@ async function main() {
   applyPopupSize((await getSavedPopupSize()) ?? POPUP_SIZE_DEFAULT);
   setupPopupResize();
 
+  // Apply theme + typography ASAP.
+  applyUiSettings(await getSettings());
+
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
   const useContextToggle = document.getElementById('useContextToggle') as HTMLInputElement | null;
-  const insertBtn = document.getElementById('insertSelectionBtn') as HTMLButtonElement | null;
   const popoutBtn = document.getElementById('popoutBtn') as HTMLButtonElement | null;
 
   btn.addEventListener('click', () => void onGenerate());
@@ -502,6 +653,11 @@ async function main() {
   if (popoutBtn) {
     popoutBtn.addEventListener('click', () => void openPopoutWindow());
   }
+
+  setupSettingsModal(() => {
+    // Reload models if base URL / default model changed.
+    void loadModels();
+  });
 
   promptEl.addEventListener('input', () => autoGrowTextarea(promptEl));
   promptEl.addEventListener('keydown', (ev) => {
@@ -523,22 +679,6 @@ async function main() {
     });
     // Default off
     setContextBadge('Context off', false);
-  }
-
-  if (insertBtn) {
-    insertBtn.addEventListener('click', () => {
-      Promise.resolve()
-        .then(() => getTabContext(8000))
-        .then((ctx) => {
-          const text = (ctx.selection || ctx.textExcerpt || '').trim();
-          if (!text) throw new Error('No selection or page text available');
-          const toInsert = text.length > 2000 ? text.slice(0, 2000) + '…' : text;
-          insertAtCursor(promptEl, (promptEl.value ? '\n\n' : '') + toInsert);
-          autoGrowTextarea(promptEl);
-          promptEl.focus();
-        })
-        .catch((e) => addMessage('error', String((e as any)?.message ?? e)));
-    });
   }
 
   try {

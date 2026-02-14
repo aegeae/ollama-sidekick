@@ -8,7 +8,11 @@
   </head>
   <body>
     <main class="wrap">
-      <h1>Options</h1>
+      <h1>Sidekick Settings</h1>
+
+      <p class="hint">
+        Tip: most settings are easier to change from the popup → <strong>Settings</strong>.
+      </p>
 
       <label class="label">
         Base URL
@@ -18,6 +22,30 @@
       <label class="label">
         Default Model
         <input id="model" placeholder="llama3.1" />
+      </label>
+
+      <label class="label">
+        Theme
+        <select id="theme">
+          <option value="system">System</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </label>
+
+      <label class="label">
+        Font
+        <select id="fontFamily">
+          <option value="system">System UI</option>
+          <option value="sans">Sans</option>
+          <option value="serif">Serif</option>
+          <option value="mono">Monospace</option>
+        </select>
+      </label>
+
+      <label class="label">
+        Font size
+        <input id="fontSize" type="number" min="11" max="20" step="1" />
       </label>
 
       <div class="row">

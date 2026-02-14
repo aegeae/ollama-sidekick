@@ -552,6 +552,13 @@ body.resizing.both {
   background: var(--c-surface);
 }
 
+/* Pop-out window: keep the header on a single line */
+:root[data-mode='window'] .topbar {
+  grid-template-rows: auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
 .title {
   font-size: 13px;
   font-weight: 600;
@@ -584,6 +591,11 @@ body.resizing.both {
   justify-content: flex-start;
   flex-wrap: nowrap;
   min-width: 0;
+}
+
+:root[data-mode='window'] .controls {
+  width: auto;
+  justify-content: flex-end;
 }
 
 .miniBtn {

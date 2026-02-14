@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Default to a store-friendly build: no sourcemaps unless explicitly requested.
+  const sourcemap = mode === 'debug';
+
+  return {
   // Ensure Vite emits relative URLs suitable for Chrome extensions.
   base: './',
   plugins: [
@@ -22,7 +26,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap,
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'src/popup/popup.html'),
@@ -42,4 +46,5 @@ export default defineConfig({
       }
     }
   }
+  };
 });

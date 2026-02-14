@@ -5,9 +5,17 @@
   "type": "module",
   "scripts": {
     "clean": "rimraf dist .vite",
-    "dev": "vite build --watch",
+    "dev": "vite build --watch --mode debug",
     "gen:icons": "node scripts/gen-icons.mjs",
     "build": "vite build",
+    "build:debug": "vite build --mode debug",
+    "version:patch": "node scripts/bump-version.mjs patch",
+    "version:minor": "node scripts/bump-version.mjs minor",
+    "version:major": "node scripts/bump-version.mjs major",
+    "release:patch": "node scripts/bump-version.mjs patch && npm run build",
+    "release:minor": "node scripts/bump-version.mjs minor && npm run build",
+    "release:major": "node scripts/bump-version.mjs major && npm run build",
+    "package:zip": "npm run build && rimraf ollama-sidekick.zip && cd dist && zip -r ../ollama-sidekick.zip . -x '*.map' -x '**/.DS_Store'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

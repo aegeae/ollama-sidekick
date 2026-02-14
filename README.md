@@ -25,7 +25,17 @@ Start Ollama (example):
 
 - `npm run build`
 
+Notes:
+
+- `npm run build` is store-ready by default (no sourcemaps).
+- Use `npm run build:debug` if you want sourcemaps for local debugging.
+
 This produces `dist/` which you can load as an unpacked extension.
+
+For Chrome Web Store packaging:
+
+- `npm run package:zip` → creates `ollama-sidekick.zip` from `dist/`
+- See `STORE_CHECKLIST.md` for a submission checklist.
 
 ## Load in Brave
 
@@ -64,19 +74,28 @@ Nothing is persisted by default; context is only extracted on user action.
 - Run `npm run dev` (watch rebuild)
 - Reload the extension in `brave://extensions` after changes
 
+## Versioning / release
+
+- `npm run release:patch` (or `release:minor` / `release:major`) bumps versions in `package.json` + `manifest.json` and then builds.
+
 ## Notes / Troubleshooting
 
 - The extension requests host permissions for:
   - `http://localhost:11434/*`
   - `http://127.0.0.1:11434/*`
-- If you use a different port or hostname, update Options (and manifest host permissions accordingly).
-- If you use a different port or hostname, update Settings (and manifest host permissions accordingly).
+- By default, the extension only allows a **local** Base URL on port **11434**. If you want to use a different port/hostname, you must update the manifest host permissions and rebuild.
 
 ### Permissions
 
 - `storage` — save base URL + default model
 - `activeTab` + `scripting` — extract current page selection/excerpt on-demand when you use Context
 - `contextMenus` — adds “Ask Ollama about selection”
+
+## Chrome Web Store
+
+- Privacy policy: `PRIVACY_POLICY.md`
+- Listing copy + permissions justification: `STORE_LISTING.md`
+- Submission checklist: `STORE_CHECKLIST.md`
 
 ### HTTP 403 Forbidden
 

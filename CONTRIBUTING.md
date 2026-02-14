@@ -66,7 +66,7 @@ If `main` is protected, PRs are required for merging.
 - On push/merge to `main`, GitHub Actions may automatically bump versions, commit a release bump, and create a tag `vX.Y.Z`.
 - Tag pushes trigger the GitHub Release workflow which uploads `ollama-sidekick.zip`.
 
-See [RELEASING.md](RELEASING.md) for required GitHub settings and details.
+See [docs/RELEASING.md](docs/RELEASING.md) for required GitHub settings and details.
 
 ## Security / privacy
 

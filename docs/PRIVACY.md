@@ -35,4 +35,4 @@ To avoid reading page text:
 - Open the **Context preview** drawer
 - Disable both **Selection** and **Excerpt**
 
-For the formal policy used for store listings, see `PRIVACY_POLICY.md` at repo root.
+For the formal policy used for store listings, see `docs/PRIVACY_POLICY.md`.

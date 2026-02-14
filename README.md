@@ -39,7 +39,7 @@ This produces `dist/` which you can load as an unpacked extension.
 For Chrome Web Store packaging:
 
 - `npm run package:zip` → creates `ollama-sidekick.zip` from `dist/`
-- See `STORE_CHECKLIST.md` for a submission checklist.
+- See `docs/STORE_CHECKLIST.md` for a submission checklist.
 
 ## Load in Brave
 
@@ -121,7 +121,7 @@ On push/merge to `main`, GitHub Actions:
 - Creates a tag `vX.Y.Z`
 - Creates a GitHub Release and attaches `ollama-sidekick.zip`
 
-Details and required GitHub settings are in [RELEASING.md](RELEASING.md).
+Details and required GitHub settings are in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Docs
 
@@ -152,9 +152,9 @@ Details and required GitHub settings are in [RELEASING.md](RELEASING.md).
 
 ## Chrome Web Store
 
-- Privacy policy: `PRIVACY_POLICY.md`
-- Listing copy + permissions justification: `STORE_LISTING.md`
-- Submission checklist: `STORE_CHECKLIST.md`
+- Privacy policy: `docs/PRIVACY_POLICY.md`
+- Listing copy + permissions justification: `docs/STORE_LISTING.md`
+- Submission checklist: `docs/STORE_CHECKLIST.md`
 
 ## License
 

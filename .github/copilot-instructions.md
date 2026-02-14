@@ -116,7 +116,7 @@ This repo is a minimal **Chrome/Brave Manifest V3** extension that chats with a 
   - `scripts/sync-manifest-version.mjs` keeps `manifest.json` version aligned with `package.json`.
 
 - Manual fallback workflow: `.github/workflows/release.yml` can be run manually to build a zip for a given ref.
-- Details: `RELEASING.md`
+- Details: `docs/RELEASING.md`
 
 ## Coding conventions (repo-specific)
 
@@ -149,5 +149,5 @@ This repo is a minimal **Chrome/Brave Manifest V3** extension that chats with a 
 
 ## Unknown / verify (before big changes)
 
-- If you change any network behavior or permissions, cross-check: `manifest.json`, `src/lib/settings.ts`, and `STORE_LISTING.md`.
-- If you touch releases, cross-check: `.github/workflows/*.yml` and `RELEASING.md`.
+- If you change any network behavior or permissions, cross-check: `manifest.json`, `src/lib/settings.ts`, and `docs/STORE_LISTING.md`.
+- If you touch releases, cross-check: `.github/workflows/*.yml` and `docs/RELEASING.md`.

@@ -1,3 +1,9 @@
+## [0.10.0](https://github.com/aegeae/ollama-sidekick/compare/v0.9.0...v0.10.0) (2026-02-14)
+
+### Features
+
+* **popup:** add diagnostics filters and resizable context drawer ([5043dc8](https://github.com/aegeae/ollama-sidekick/commit/5043dc848190b25b72360b0e8b2404d8df34894a))
+
 ## [0.9.0](https://github.com/aegeae/ollama-sidekick/compare/v0.8.1...v0.9.0) (2026-02-14)
 
 ### Features

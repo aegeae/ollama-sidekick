@@ -1,5 +1,6 @@
 import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
 import { getSettings } from '../lib/settings';
+import { applyUiSettings } from '../lib/uiSettings';
 
 function $(id: string) {
   const el = document.getElementById(id);
@@ -233,6 +234,8 @@ async function onGenerate() {
 }
 
 async function main() {
+  applyUiSettings(await getSettings());
+
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
 

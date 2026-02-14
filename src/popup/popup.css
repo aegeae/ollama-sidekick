@@ -1,9 +1,48 @@
 :root {
+  /* Bundled font (ships with extension) */
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../fonts/jetbrains-mono/JetBrainsMono-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../../fonts/jetbrains-mono/JetBrainsMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
   color-scheme: dark;
-  font-family: var(--ui-font-family, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif);
+  font-family: var(
+    --ui-font-family,
+    "JetBrains Mono",
+    system-ui,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    "Noto Sans",
+    "Liberation Sans",
+    sans-serif
+  );
 
   --ui-font-size: 13px;
-  --ui-font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  --ui-font-family: "JetBrains Mono", system-ui, "Segoe UI", Roboto, Helvetica, Arial, "Noto Sans", "Liberation Sans", sans-serif;
 
   --c-bg: #0b0f14;
   --c-fg: #e6edf3;
@@ -265,7 +304,7 @@ body.resizing.both {
 }
 
 .model {
-  flex: 1 1 180px;
+  font-family: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, "Liberation Mono", "Courier New", monospace;
   width: auto;
   max-width: 260px;
   min-width: 120px;
@@ -369,7 +408,7 @@ body.resizing.both {
   border: 1px solid var(--c-border-soft);
   background: rgba(0, 0, 0, 0.20);
   overflow: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
 }
 

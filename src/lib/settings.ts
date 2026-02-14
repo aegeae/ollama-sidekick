@@ -2,7 +2,7 @@ export type Settings = {
   baseUrl: string;
   model: string;
   theme: 'system' | 'dark' | 'light';
-  fontFamily: 'system' | 'sans' | 'serif' | 'mono';
+  fontFamily: 'system' | 'sans' | 'serif' | 'mono' | 'jetbrainsMono';
   fontSize: number;
 };
 
@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   baseUrl: 'http://localhost:11434',
   model: 'llama3.1',
   theme: 'system',
-  fontFamily: 'system',
+  fontFamily: 'jetbrainsMono',
   fontSize: 13
 };
 
@@ -55,7 +55,11 @@ export async function getSettings(): Promise<Settings> {
 
   const theme = data.theme === 'dark' || data.theme === 'light' || data.theme === 'system' ? data.theme : null;
   const fontFamily =
-    data.fontFamily === 'system' || data.fontFamily === 'sans' || data.fontFamily === 'serif' || data.fontFamily === 'mono'
+    data.fontFamily === 'system' ||
+    data.fontFamily === 'sans' ||
+    data.fontFamily === 'serif' ||
+    data.fontFamily === 'mono' ||
+    data.fontFamily === 'jetbrainsMono'
       ? data.fontFamily
       : null;
 

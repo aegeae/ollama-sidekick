@@ -1,4 +1,5 @@
 import { getSettings, setSettings, type Settings } from '../lib/settings';
+import { applyUiSettings } from '../lib/uiSettings';
 
 function $(id: string) {
   const el = document.getElementById(id);
@@ -15,19 +16,6 @@ async function load() {
   ($('fontSize') as HTMLInputElement).value = String(settings.fontSize);
 
   applyUiSettings(settings);
-}
-
-function applyUiSettings(settings: Settings) {
-  document.documentElement.dataset.theme = settings.theme;
-  const fontFamily =
-    settings.fontFamily === 'mono'
-      ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
-      : settings.fontFamily === 'serif'
-        ? 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif'
-        : 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
-
-  document.documentElement.style.setProperty('--ui-font-family', fontFamily);
-  document.documentElement.style.setProperty('--ui-font-size', `${settings.fontSize}px`);
 }
 
 async function save() {

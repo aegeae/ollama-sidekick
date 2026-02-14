@@ -1,5 +1,6 @@
 import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
 import { DEFAULT_SETTINGS, getSettings, setSettings, type Settings } from '../lib/settings';
+import { applyUiSettings } from '../lib/uiSettings';
 
 function $(id: string) {
   const el = document.getElementById(id);
@@ -20,22 +21,6 @@ const POPUP_SIZE_MAX: PopupSize = { width: 640, height: 900 };
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
-}
-
-function applyUiSettings(settings: Settings) {
-  document.documentElement.dataset.theme = settings.theme;
-
-  const fontFamily =
-    settings.fontFamily === 'mono'
-      ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
-      : settings.fontFamily === 'serif'
-        ? 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif'
-        : settings.fontFamily === 'sans'
-          ? 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
-          : 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
-
-  document.documentElement.style.setProperty('--ui-font-family', fontFamily);
-  document.documentElement.style.setProperty('--ui-font-size', `${settings.fontSize}px`);
 }
 
 function isValidHttpUrl(value: string): boolean {

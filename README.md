@@ -38,7 +38,7 @@ This produces `dist/` which you can load as an unpacked extension.
 
 - Click the extension icon → popup
 - If model list fails to load, confirm Ollama is reachable at `http://localhost:11434`
-- Configure base URL / default model via **Options**
+- Configure base URL / default model via **Settings** (in the popup)
 
 ### Popup resize / move
 
@@ -50,7 +50,7 @@ This produces `dist/` which you can load as an unpacked extension.
 In the popup:
 
 - Toggle **Context** to allow using the current tab’s selection/page text as extra prompt context.
-- Click **Insert** to insert your current selection (or an excerpt) into the composer.
+- Send a message; the context is attached automatically when enabled.
 
 Nothing is persisted by default; context is only extracted on user action.
 
@@ -70,11 +70,12 @@ Nothing is persisted by default; context is only extracted on user action.
   - `http://localhost:11434/*`
   - `http://127.0.0.1:11434/*`
 - If you use a different port or hostname, update Options (and manifest host permissions accordingly).
+- If you use a different port or hostname, update Settings (and manifest host permissions accordingly).
 
 ### Permissions
 
 - `storage` — save base URL + default model
-- `activeTab` + `scripting` — extract current page selection/excerpt on-demand when you use Context/Insert
+- `activeTab` + `scripting` — extract current page selection/excerpt on-demand when you use Context
 - `contextMenus` — adds “Ask Ollama about selection”
 
 ### HTTP 403 Forbidden

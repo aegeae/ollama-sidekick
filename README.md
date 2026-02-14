@@ -183,5 +183,5 @@ Then reload the extension and retry.
 - Popup: create a new chat, send a message, reload the popup — history remains.
 - Folders: create folder, move chat via folder dropdown, collapse/expand folder.
 - Search: search finds chats by title and message content.
-- Delete: delete a chat; delete a folder moves its chats to **Unfiled**.
+- Delete: delete a chat; delete a folder moves its chats to **Inbox**.
 - Context: with **Context** enabled, verify only your typed message is stored (not the injected page excerpt).

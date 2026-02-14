@@ -714,10 +714,10 @@ function renderFolderSelect() {
   const folders = getFolders(chatStoreState);
   select.innerHTML = '';
 
-  const optUnfiled = document.createElement('option');
-  optUnfiled.value = '';
-  optUnfiled.textContent = 'Unfiled';
-  select.appendChild(optUnfiled);
+  const optInbox = document.createElement('option');
+  optInbox.value = '';
+  optInbox.textContent = 'Inbox';
+  select.appendChild(optInbox);
 
   for (const f of folders) {
     const opt = document.createElement('option');
@@ -907,8 +907,8 @@ function renderSidebar() {
     return block;
   };
 
-  // Unfiled first.
-  container.appendChild(renderFolderBlock(null, 'Unfiled', false, false));
+  // Inbox first.
+  container.appendChild(renderFolderBlock(null, 'Inbox', false, false));
 
   for (const f of folders) {
     const list = byFolder.get(f.id) ?? [];
@@ -917,17 +917,17 @@ function renderSidebar() {
     container.appendChild(renderFolderBlock(f.id, f.name, !!f.collapsed, true));
   }
 
-  // If there are chats only in Unfiled and query is empty, ensure unfiled list shows those.
-  // (We rendered Unfiled above, but it used byFolder which may be empty.)
-  // Re-render unfiled list accurately:
+  // If there are chats only in Inbox and query is empty, ensure the list shows those.
+  // (We rendered Inbox above, but it used byFolder which may be empty.)
+  // Re-render Inbox list accurately:
   const first = container.firstElementChild as HTMLDivElement | null;
   if (first) {
-    const unfiled = byFolder.get(null) ?? [];
+    const inboxChats = byFolder.get(null) ?? [];
     const header = first.querySelector('.folderHeaderBtn') as HTMLButtonElement | null;
     const existingList = first.querySelector('.chatList');
     if (existingList) existingList.remove();
-    header && (header.textContent = `▼ Unfiled`);
-    first.appendChild(renderChatList(unfiled));
+    header && (header.textContent = `▼ Inbox`);
+    first.appendChild(renderChatList(inboxChats));
   }
 }
 
@@ -1751,7 +1751,7 @@ async function onGenerate() {
       const ctx = await getTabContext(8000);
       finalPrompt = buildPromptWithOptionalContext(trimmed, ctx);
       setContextBadge('Context attached', true);
-      setTimeout(() => setContextBadge('Context on', true), 1500);
+      setTimeout(() => setContextBadge('Context Aware', true), 1500);
     } catch (e) {
       // Context is best-effort; show a system message and continue without it.
       const text = `Context not attached: ${formatContextAttachError(e)}`;
@@ -1759,7 +1759,7 @@ async function onGenerate() {
       chatStoreState = await appendMessage(activeChatId, { role: 'system', text, ts: Date.now(), id });
       addMessageWithId('system', text, id);
       setContextBadge('Context unavailable', true);
-      setTimeout(() => setContextBadge('Context on', true), 2000);
+      setTimeout(() => setContextBadge('Context Aware', true), 2000);
     }
 
     const resp = await sendMessage({ type: 'OLLAMA_GENERATE', prompt: finalPrompt, model });
@@ -1931,7 +1931,7 @@ async function main() {
   renderSidebar();
 
   // Context is always-on by default.
-  setContextBadge('Context on', true);
+  setContextBadge('Context Aware', true);
 
   try {
     await loadModels();
@@ -2152,7 +2152,7 @@ async function main() {
           const folderId = actionBtn.dataset.folderId;
           void (async () => {
             const f = chatStoreState?.folders.find((x) => x.id === folderId);
-            const ok = confirm(`Delete folder "${f?.name ?? 'Folder'}"? Chats will be moved to Unfiled.`);
+            const ok = confirm(`Delete folder "${f?.name ?? 'Folder'}"? Chats will be moved to Inbox.`);
             if (!ok) return;
             chatStoreState = await deleteFolder(folderId);
             renderFolderSelect();

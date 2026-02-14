@@ -138,7 +138,7 @@ export function serializeHistoryToMarkdown(state: ChatStoreStateV1): string {
   };
 
   if (rootChats.length > 0) {
-    parts.push(`## Unfiled`);
+    parts.push(`## Inbox`);
     parts.push('');
     for (const c of rootChats) writeChat(c);
   }

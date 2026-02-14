@@ -330,7 +330,7 @@ export async function renameFolder(folderId: string, name: string): Promise<Chat
 export async function deleteFolder(folderId: string): Promise<ChatStoreStateV1> {
   const state = await getState();
 
-  // Move chats to Unfiled (null folder) instead of deleting.
+  // Move chats to Inbox (null folder) instead of deleting.
   for (const c of state.chats) {
     if (c.folderId === folderId) c.folderId = null;
   }

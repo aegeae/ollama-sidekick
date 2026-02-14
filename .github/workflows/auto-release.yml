@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: auto-release-main
@@ -142,6 +143,26 @@ jobs:
           path: ollama-sidekick.zip
           if-no-files-found: error
           retention-days: 30
+
+      - name: Trigger Release workflow (create GitHub Release)
+        if: |
+          (
+            (steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true') ||
+            (steps.next.outputs.bump == 'none' && steps.next.outputs.should_tag_base == 'true' && steps.tagcheck.outputs.tag_exists != 'true')
+          )
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = `${{ steps.next.outputs.tag }}`;
+            core.info(`Dispatching release.yml for tag ${tag}`);
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release.yml',
+              ref: 'main',
+              inputs: { tag },
+            });
 
       - name: Summary
         if: steps.next.outputs.bump != 'none' && steps.tagcheck.outputs.tag_exists != 'true'

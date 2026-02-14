@@ -61,14 +61,45 @@ If you want a quick CLI jump into the right place:
 - `scripts/next-version.mjs` computes bump + next version from git history
 - `scripts/apply-version.mjs` applies the version to `package.json` + `manifest.json`
 - `.github/workflows/auto-release.yml` runs on push to `main` and performs bump+tag
-- `.github/workflows/release.yml` runs on tag push (`v*`) and creates the GitHub Release + zip
+- `.github/workflows/release.yml` creates the GitHub Release + zip
+
+### Note: why GitHub Releases might be missing
+
+If tags are created/pushed by GitHub Actions using the default `GITHUB_TOKEN`, GitHub often does **not** trigger other workflows from that tag push.
+
+To make releases reliable, `auto-release.yml` explicitly dispatches `release.yml` via `workflow_dispatch` after it creates/pushes the tag.
 
 ## Verifying tags / releases
 
 - Tags: GitHub → **Releases** / **Tags**
 - Actions: GitHub → **Actions**
   - `Auto Release (main)` should run on pushes to `main`
-  - `Release` should run on the created tag
+  - `Release` should run right after tagging (dispatched by Auto Release)
+
+You can also run `Release` manually:
+
+- GitHub → **Actions** → **Release** → **Run workflow** → set `tag` to e.g. `v0.4.0`
+
+## Chrome Web Store upload (`.zip`)
+
+Chrome Web Store (Developer Dashboard) expects a **ZIP** containing the extension files with `manifest.json` at the **root** of the zip.
+
+This repo already produces the correct upload file:
+
+- `ollama-sidekick.zip` (created by `npm run package:zip`)
+  - It zips the contents of `dist/` so `manifest.json` is at the zip root (not nested under a `dist/` folder).
+  - It excludes sourcemaps (`*.map`) for a store-friendly build.
+
+Where to download it:
+
+- Preferred: GitHub → **Releases** → download the `ollama-sidekick.zip` asset from the latest `v*` release.
+- Alternative: GitHub → **Actions** → open the workflow run → download the artifact (it downloads as a zip).
+  - Important: GitHub artifacts are wrapped in an extra zip. Extract the downloaded artifact first, then upload the inner `ollama-sidekick.zip` to the Chrome dashboard.
+
+Quick sanity check (optional):
+
+- `unzip -l ollama-sidekick.zip | head`
+- Confirm you see `manifest.json` at the top level (no `dist/manifest.json`).
 
 ## Manual fallback
 

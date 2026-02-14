@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.4.0). Leave empty to use the current ref.'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -12,9 +18,15 @@ jobs:
   release:
     runs-on: ubuntu-latest
 
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CHECKOUT_REF: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,6 +54,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             ollama-sidekick.zip
           generate_release_notes: true

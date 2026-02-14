@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ollama</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <h1>Ollama</h1>
+
+      <label class="label">
+        Model
+        <select id="modelSelect"></select>
+      </label>
+
+      <label class="label">
+        Prompt
+        <textarea id="prompt" rows="6" placeholder="Ask something..."></textarea>
+      </label>
+
+      <div class="row">
+        <button id="generateBtn">Generate</button>
+        <a class="link" href="../options/options.html" target="_blank" rel="noreferrer">Options</a>
+      </div>
+
+      <pre id="output" class="output"></pre>
+    </main>
+
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>

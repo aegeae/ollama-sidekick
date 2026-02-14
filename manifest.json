@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Brave Ollama Extension",
+  "version": "0.1.0",
+  "description": "A Brave/Chrome extension that talks to local Ollama models.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://localhost:11434/*",
+    "http://127.0.0.1:11434/*"
+  ],
+  "action": {
+    "default_title": "Ollama",
+    "default_popup": "src/popup/popup.html"
+  },
+  "options_page": "src/options/options.html",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}

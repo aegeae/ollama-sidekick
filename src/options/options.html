@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ollama Options</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <h1>Options</h1>
+
+      <label class="label">
+        Base URL
+        <input id="baseUrl" placeholder="http://localhost:11434" />
+      </label>
+
+      <label class="label">
+        Default Model
+        <input id="model" placeholder="llama3.1" />
+      </label>
+
+      <div class="row">
+        <button id="saveBtn">Save</button>
+        <span id="status" class="status"></span>
+      </div>
+    </main>
+
+    <script type="module" src="./options.ts"></script>
+  </body>
+</html>

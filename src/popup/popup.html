@@ -173,6 +173,17 @@
           <section id="chat" class="chat" aria-label="Chat"></section>
         </div>
 
+        <div
+          id="ctxDrawerSplitter"
+          class="ctxDrawerSplitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize context preview"
+          tabindex="0"
+          title="Drag to resize"
+          hidden
+        ></div>
+
         <aside id="contextDrawer" class="contextDrawer" aria-label="Context preview" hidden>
           <div class="contextDrawerHeader">
             <div class="contextDrawerTitle">Context preview</div>
@@ -243,11 +254,28 @@
                   <button id="consoleCaptureToggleBtn" class="miniBtn" type="button" aria-label="Capture console output from active tab">
                     Capture console
                   </button>
-                  <button id="consoleCaptureAttachToContextBtn" class="miniBtn" type="button" title="Attach captured diagnostics to context">
-                    Attach to context
+                  <button
+                    id="consoleCaptureAttachToContextBtn"
+                    class="miniBtn"
+                    type="button"
+                    aria-label="Attach console logs to context"
+                    title="Attach visible console logs to context"
+                  >
+                    Attach context
                   </button>
-                  <button id="consoleCaptureClearBtn" class="miniBtn" type="button">Clear logs</button>
-                  <button id="consoleCaptureCopyBtn" class="miniBtn" type="button">Copy logs</button>
+                  <button id="consoleCaptureClearBtn" class="miniBtn" type="button" aria-label="Clear console logs" title="Clear console logs">
+                    Clear
+                  </button>
+                  <button id="consoleCaptureCopyBtn" class="miniBtn" type="button" aria-label="Copy console logs" title="Copy visible console logs">
+                    Copy
+                  </button>
+
+                  <label class="ctxBudget" title="Use * to match all. Regex: /pattern/flags">
+                    Filter
+                    <input id="consoleCaptureFilter" class="ctxBudgetInput diagFilterInput" type="text" value="*" placeholder="*" />
+                  </label>
+
+                  <span id="consoleCaptureFilterMeta" class="ctxMeta" aria-live="polite"></span>
                   <span id="consoleCaptureMeta" class="ctxMeta" aria-live="polite"></span>
                 </div>
 
@@ -263,16 +291,33 @@
                   <button id="netCaptureToggleBtn" class="miniBtn" type="button" aria-label="Capture fetch/XHR requests from active tab">
                     Capture requests
                   </button>
-                  <button id="netCaptureAttachToContextBtn" class="miniBtn" type="button" title="Attach captured diagnostics to context">
-                    Attach to context
+                  <button
+                    id="netCaptureAttachToContextBtn"
+                    class="miniBtn"
+                    type="button"
+                    aria-label="Attach requests to context"
+                    title="Attach visible requests to context"
+                  >
+                    Attach context
                   </button>
-                  <button id="netCaptureClearBtn" class="miniBtn" type="button">Clear requests</button>
-                  <button id="netCaptureCopyBtn" class="miniBtn" type="button">Copy requests</button>
+                  <button id="netCaptureClearBtn" class="miniBtn" type="button" aria-label="Clear captured requests" title="Clear captured requests">
+                    Clear
+                  </button>
+                  <button id="netCaptureCopyBtn" class="miniBtn" type="button" aria-label="Copy captured requests" title="Copy visible requests">
+                    Copy
+                  </button>
 
                   <label class="ctxToggle" title="Capturing request/response bodies may include sensitive data">
                     <input id="netCaptureIncludeBodies" type="checkbox" />
                     Include bodies
                   </label>
+
+                  <label class="ctxBudget" title="Use * to match all. Regex: /pattern/flags">
+                    Filter
+                    <input id="netCaptureFilter" class="ctxBudgetInput diagFilterInput" type="text" value="*" placeholder="*" />
+                  </label>
+
+                  <span id="netCaptureFilterMeta" class="ctxMeta" aria-live="polite"></span>
 
                   <span id="netCaptureMeta" class="ctxMeta" aria-live="polite"></span>
                 </div>

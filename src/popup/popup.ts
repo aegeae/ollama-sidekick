@@ -40,6 +40,7 @@ import {
   type TabContextLike
 } from '../lib/promptWithContext';
 import { buildContextPreviewCacheKey } from '../lib/contextPreviewCacheKey';
+import { compileDiagnosticsFilter } from '../lib/diagnosticsFilter';
 
 const FOLDER_UNAVAILABLE_HINT =
   'Folder picker is not available in this browser. Use Export now (download), and enable “Ask where to save each file” in browser download settings if you want to pick a folder.';
@@ -73,6 +74,10 @@ const POPUP_SIZE_MAX: PopupSize = { width: 640, height: 900 };
 const SIDEBAR_WIDTH_DEFAULT = 220;
 const SIDEBAR_WIDTH_MIN = 200;
 const SIDEBAR_WIDTH_MAX = 420;
+
+const CTX_DRAWER_WIDTH_DEFAULT = 360;
+const CTX_DRAWER_WIDTH_MIN = 260;
+const CTX_DRAWER_WIDTH_MAX = 520;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -325,6 +330,21 @@ async function getSavedSidebarPrefs(): Promise<{ width: number; collapsed: boole
     width: clamp(Math.round(widthRaw), SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX),
     collapsed
   };
+}
+
+async function getSavedCtxDrawerWidth(): Promise<number> {
+  const data = await chrome.storage.local.get(['ctxDrawerWidth']);
+  const widthRaw = typeof data.ctxDrawerWidth === 'number' ? data.ctxDrawerWidth : CTX_DRAWER_WIDTH_DEFAULT;
+  return clamp(Math.round(widthRaw), CTX_DRAWER_WIDTH_MIN, CTX_DRAWER_WIDTH_MAX);
+}
+
+async function saveCtxDrawerWidth(width: number): Promise<void> {
+  await chrome.storage.local.set({ ctxDrawerWidth: clamp(Math.round(width), CTX_DRAWER_WIDTH_MIN, CTX_DRAWER_WIDTH_MAX) });
+}
+
+function applyCtxDrawerWidth(width: number): void {
+  const next = clamp(Math.round(width), CTX_DRAWER_WIDTH_MIN, CTX_DRAWER_WIDTH_MAX);
+  document.documentElement.style.setProperty('--ctx-drawer-width-expanded', `${next}px`);
 }
 
 async function saveSidebarWidth(width: number): Promise<void> {
@@ -1827,12 +1847,14 @@ let ctxDrawerCache: {
 let consolePollTimer: number | null = null;
 let consoleLastRenderedCount = 0;
 let consoleLastRenderedTail = '';
+let consoleLastRenderedFilterRaw = '*';
 
 let consoleEffectiveTabId: number | null = null;
 
 let netPollTimer: number | null = null;
 let netLastRenderedCount = 0;
 let netLastRenderedTail = '';
+let netLastRenderedFilterRaw = '*';
 
 let netEffectiveTabId: number | null = null;
 
@@ -1866,6 +1888,24 @@ function setConsoleCaptureLogsText(text: string) {
   const el = document.getElementById('consoleCaptureLogs') as HTMLPreElement | null;
   if (!el) return;
   el.textContent = text;
+}
+
+function setConsoleCaptureFilterMeta(text: string) {
+  const el = document.getElementById('consoleCaptureFilterMeta') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function getConsoleCaptureFilterRaw(): string {
+  const el = document.getElementById('consoleCaptureFilter') as HTMLInputElement | null;
+  const raw = (el?.value ?? '*').trim();
+  return raw || '*';
+}
+
+function consoleEntryTextForFilter(e: TabConsoleLogEntry): string {
+  const level = typeof e.level === 'string' ? e.level : 'log';
+  const text = typeof e.text === 'string' ? e.text : '';
+  return `${level} ${text}`;
 }
 
 function formatConsoleLogs(entries: TabConsoleLogEntry[]): string {
@@ -1921,20 +1961,35 @@ async function refreshConsoleCaptureView(): Promise<void> {
     const logs = Array.isArray(resp.logs) ? resp.logs : [];
     const capturing = resp.capturing === true;
 
+    const compiledFilter = compileDiagnosticsFilter(getConsoleCaptureFilterRaw());
+    const shownLogs = logs.filter((e) => compiledFilter.matcher(consoleEntryTextForFilter(e)));
+    setConsoleCaptureFilterMeta(compiledFilter.error ? compiledFilter.error : compiledFilter.raw);
+
     // Keep using the resolved tab id from background for subsequent operations.
     consoleEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : consoleEffectiveTabId;
 
     const toggleBtn = document.getElementById('consoleCaptureToggleBtn') as HTMLButtonElement | null;
     if (toggleBtn) toggleBtn.textContent = capturing ? 'Stop capturing' : 'Capture console';
 
-    setConsoleCaptureMeta(`Active tab · Console: ${capturing ? 'On' : 'Off'} · ${logs.length.toLocaleString()} lines`);
+    setConsoleCaptureMeta(
+      `Active tab · Console: ${capturing ? 'On' : 'Off'} · ${shownLogs.length.toLocaleString()}/${logs.length.toLocaleString()} lines`
+    );
 
     // Avoid re-rendering the <pre> if nothing changed.
-    const tail = logs.length > 0 ? (logs[logs.length - 1]?.text ?? '') : '';
-    if (logs.length !== consoleLastRenderedCount || tail !== consoleLastRenderedTail) {
-      setConsoleCaptureLogsText(logs.length ? formatConsoleLogs(logs) : '(No logs yet. Start capture, then interact with the page.)');
-      consoleLastRenderedCount = logs.length;
+    const tail = shownLogs.length > 0 ? (shownLogs[shownLogs.length - 1]?.text ?? '') : '';
+    const filterRaw = compiledFilter.raw;
+    if (shownLogs.length !== consoleLastRenderedCount || tail !== consoleLastRenderedTail || filterRaw !== consoleLastRenderedFilterRaw) {
+      if (logs.length === 0) {
+        setConsoleCaptureLogsText('(No logs yet. Start capture, then interact with the page.)');
+      } else if (shownLogs.length === 0) {
+        setConsoleCaptureLogsText('(No matching logs for current filter.)');
+      } else {
+        setConsoleCaptureLogsText(formatConsoleLogs(shownLogs));
+      }
+
+      consoleLastRenderedCount = shownLogs.length;
       consoleLastRenderedTail = tail;
+      consoleLastRenderedFilterRaw = filterRaw;
     }
 
     if (capturing && ctxDrawerOpen) startConsolePolling();
@@ -2009,7 +2064,14 @@ async function attachConsoleLogsToContext(): Promise<void> {
     return;
   }
 
-  consoleContextExtrasByTabKey.set(getCurrentContextTabKey(), formatConsoleExtrasForContext(logs));
+  const compiledFilter = compileDiagnosticsFilter(getConsoleCaptureFilterRaw());
+  const shownLogs = logs.filter((e) => compiledFilter.matcher(consoleEntryTextForFilter(e)));
+  if (shownLogs.length === 0) {
+    setCtxDrawerStatus('No logs match the current filter.');
+    return;
+  }
+
+  consoleContextExtrasByTabKey.set(getCurrentContextTabKey(), formatConsoleExtrasForContext(shownLogs));
   bumpConsoleContextVersionForCurrentTab();
 
   await refreshCtxDrawerFromComposer();
@@ -2036,6 +2098,29 @@ function setNetCaptureLogsText(text: string) {
   const el = document.getElementById('netCaptureLogs') as HTMLPreElement | null;
   if (!el) return;
   el.textContent = text;
+}
+
+function setNetCaptureFilterMeta(text: string) {
+  const el = document.getElementById('netCaptureFilterMeta') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function getNetCaptureFilterRaw(): string {
+  const el = document.getElementById('netCaptureFilter') as HTMLInputElement | null;
+  const raw = (el?.value ?? '*').trim();
+  return raw || '*';
+}
+
+function netEntryTextForFilter(e: TabNetLogEntry): string {
+  const kind = e.kind === 'xhr' ? 'xhr' : 'fetch';
+  const method = (typeof e.method === 'string' ? e.method : 'GET').toUpperCase();
+  const url = typeof e.url === 'string' ? e.url : '';
+  const status = typeof e.status === 'number' ? String(e.status) : '';
+  const err = typeof e.error === 'string' ? e.error : '';
+  const req = typeof e.requestBodyText === 'string' ? e.requestBodyText : '';
+  const res = typeof e.responseBodyText === 'string' ? e.responseBodyText : '';
+  return `${kind} ${method} ${url} ${status} ${err} ${req} ${res}`;
 }
 
 function formatNetLogs(entries: TabNetLogEntry[]): string {
@@ -2076,19 +2161,34 @@ async function refreshNetCaptureView(): Promise<void> {
     const logs = Array.isArray(resp.logs) ? resp.logs : [];
     const capturing = resp.capturing === true;
 
+    const compiledFilter = compileDiagnosticsFilter(getNetCaptureFilterRaw());
+    const shownLogs = logs.filter((e) => compiledFilter.matcher(netEntryTextForFilter(e)));
+    setNetCaptureFilterMeta(compiledFilter.error ? compiledFilter.error : compiledFilter.raw);
+
     // Keep using the resolved tab id from background for subsequent operations.
     netEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : netEffectiveTabId;
 
     const toggleBtn = document.getElementById('netCaptureToggleBtn') as HTMLButtonElement | null;
     if (toggleBtn) toggleBtn.textContent = capturing ? 'Stop capturing' : 'Capture requests';
 
-    setNetCaptureMeta(`Active tab · Network: ${capturing ? 'On' : 'Off'} · ${logs.length.toLocaleString()} requests`);
+    setNetCaptureMeta(
+      `Active tab · Network: ${capturing ? 'On' : 'Off'} · ${shownLogs.length.toLocaleString()}/${logs.length.toLocaleString()} requests`
+    );
 
-    const tail = logs.length > 0 ? (logs[logs.length - 1]?.url ?? '') : '';
-    if (logs.length !== netLastRenderedCount || tail !== netLastRenderedTail) {
-      setNetCaptureLogsText(logs.length ? formatNetLogs(logs) : '(No requests yet. Start capture, then interact with the page.)');
-      netLastRenderedCount = logs.length;
+    const tail = shownLogs.length > 0 ? (shownLogs[shownLogs.length - 1]?.url ?? '') : '';
+    const filterRaw = compiledFilter.raw;
+    if (shownLogs.length !== netLastRenderedCount || tail !== netLastRenderedTail || filterRaw !== netLastRenderedFilterRaw) {
+      if (logs.length === 0) {
+        setNetCaptureLogsText('(No requests yet. Start capture, then interact with the page.)');
+      } else if (shownLogs.length === 0) {
+        setNetCaptureLogsText('(No matching requests for current filter.)');
+      } else {
+        setNetCaptureLogsText(formatNetLogs(shownLogs));
+      }
+
+      netLastRenderedCount = shownLogs.length;
       netLastRenderedTail = tail;
+      netLastRenderedFilterRaw = filterRaw;
     }
 
     if (capturing && ctxDrawerOpen) startNetPolling();
@@ -2157,7 +2257,14 @@ async function attachNetLogsToContext(): Promise<void> {
     return;
   }
 
-  netContextExtrasByTabKey.set(getCurrentContextTabKey(), formatNetExtrasForContext(logs));
+  const compiledFilter = compileDiagnosticsFilter(getNetCaptureFilterRaw());
+  const shownLogs = logs.filter((e) => compiledFilter.matcher(netEntryTextForFilter(e)));
+  if (shownLogs.length === 0) {
+    setCtxDrawerStatus('No requests match the current filter.');
+    return;
+  }
+
+  netContextExtrasByTabKey.set(getCurrentContextTabKey(), formatNetExtrasForContext(shownLogs));
   bumpNetContextVersionForCurrentTab();
 
   await refreshCtxDrawerFromComposer();
@@ -2196,6 +2303,9 @@ function setCtxDrawerOpen(open: boolean) {
 
   const drawer = document.getElementById('contextDrawer') as HTMLElement | null;
   if (drawer) drawer.hidden = !open;
+
+  const splitter = document.getElementById('ctxDrawerSplitter') as HTMLElement | null;
+  if (splitter) splitter.hidden = !open;
 
   const toggleBtn = document.getElementById('ctxDrawerToggleBtn') as HTMLButtonElement | null;
   if (toggleBtn) {
@@ -2613,6 +2723,7 @@ async function main() {
   ) as HTMLButtonElement | null;
   const consoleCaptureClearBtn = document.getElementById('consoleCaptureClearBtn') as HTMLButtonElement | null;
   const consoleCaptureCopyBtn = document.getElementById('consoleCaptureCopyBtn') as HTMLButtonElement | null;
+  const consoleCaptureFilterEl = document.getElementById('consoleCaptureFilter') as HTMLInputElement | null;
 
   const netCaptureToggleBtn = document.getElementById('netCaptureToggleBtn') as HTMLButtonElement | null;
   const netCaptureAttachToContextBtn = document.getElementById(
@@ -2621,6 +2732,7 @@ async function main() {
   const netCaptureClearBtn = document.getElementById('netCaptureClearBtn') as HTMLButtonElement | null;
   const netCaptureCopyBtn = document.getElementById('netCaptureCopyBtn') as HTMLButtonElement | null;
   const netCaptureIncludeBodiesEl = document.getElementById('netCaptureIncludeBodies') as HTMLInputElement | null;
+  const netCaptureFilterEl = document.getElementById('netCaptureFilter') as HTMLInputElement | null;
 
   btn.addEventListener('click', () => void onSendRequested());
 
@@ -2716,6 +2828,16 @@ async function main() {
   }
 
   // Diagnostics: active tab console capture.
+  if (consoleCaptureFilterEl) {
+    // Force a re-render on filter changes even if logs are unchanged.
+    consoleCaptureFilterEl.addEventListener('input', () => {
+      consoleLastRenderedCount = 0;
+      consoleLastRenderedTail = '';
+      consoleLastRenderedFilterRaw = '';
+      void refreshConsoleCaptureView();
+    });
+  }
+
   if (consoleCaptureToggleBtn) {
     consoleCaptureToggleBtn.addEventListener('click', () => {
       void (async () => {
@@ -2788,6 +2910,15 @@ async function main() {
   }
 
   // Diagnostics: active tab network capture (fetch/XHR).
+  if (netCaptureFilterEl) {
+    netCaptureFilterEl.addEventListener('input', () => {
+      netLastRenderedCount = 0;
+      netLastRenderedTail = '';
+      netLastRenderedFilterRaw = '';
+      void refreshNetCaptureView();
+    });
+  }
+
   if (netCaptureIncludeBodiesEl) {
     netCaptureIncludeBodiesEl.checked = netCaptureIncludeBodies;
     netCaptureIncludeBodiesEl.addEventListener('change', () => {
@@ -2936,6 +3067,7 @@ async function main() {
   setGenerating(false);
 
   applySidebarPrefs(await getSavedSidebarPrefs());
+  applyCtxDrawerWidth(await getSavedCtxDrawerWidth());
 
   await ensureAtLeastOneChat();
 
@@ -2989,6 +3121,7 @@ async function main() {
 
   const sidebarToggleBtn = document.getElementById('sidebarToggleBtn') as HTMLButtonElement | null;
   const splitter = document.getElementById('sidebarSplitter') as HTMLDivElement | null;
+  const ctxSplitter = document.getElementById('ctxDrawerSplitter') as HTMLDivElement | null;
 
   const folderSelect = document.getElementById('chatFolderSelect') as HTMLSelectElement | null;
   const renameChatBtn = document.getElementById('renameChatBtn') as HTMLButtonElement | null;
@@ -3095,6 +3228,91 @@ async function main() {
       const next = clamp(cur + (ev.key === 'ArrowRight' ? 10 : -10), SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
       document.documentElement.style.setProperty('--sidebar-width-expanded', `${next}px`);
       void saveSidebarWidth(next);
+    });
+  }
+
+  if (ctxSplitter) {
+    const startDrag = (startClientX: number) => {
+      const startWidth = getCssVarPx('--ctx-drawer-width-expanded') ?? CTX_DRAWER_WIDTH_DEFAULT;
+      document.body.classList.add('resizingCtxDrawer');
+
+      const apply = (clientX: number) => {
+        // Drawer is on the right; dragging left increases width.
+        const next = clamp(startWidth + (startClientX - clientX), CTX_DRAWER_WIDTH_MIN, CTX_DRAWER_WIDTH_MAX);
+        document.documentElement.style.setProperty('--ctx-drawer-width-expanded', `${next}px`);
+      };
+
+      const finish = () => {
+        document.body.classList.remove('resizingCtxDrawer');
+        const width = getCssVarPx('--ctx-drawer-width-expanded') ?? CTX_DRAWER_WIDTH_DEFAULT;
+        void saveCtxDrawerWidth(width);
+      };
+
+      const onMouseMove = (ev: MouseEvent) => apply(ev.clientX);
+      const onMouseUp = () => {
+        window.removeEventListener('mousemove', onMouseMove, true);
+        window.removeEventListener('mouseup', onMouseUp, true);
+        finish();
+      };
+
+      window.addEventListener('mousemove', onMouseMove, true);
+      window.addEventListener('mouseup', onMouseUp, true);
+    };
+
+    ctxSplitter.addEventListener('mousedown', (ev) => {
+      if (ev.button !== 0) return;
+      if (!ctxDrawerOpen) return;
+      ev.preventDefault();
+      startDrag(ev.clientX);
+    });
+
+    ctxSplitter.addEventListener('pointerdown', (ev) => {
+      if (ev.pointerType === 'mouse') return;
+      if (!ctxDrawerOpen) return;
+      ev.preventDefault();
+
+      const startX = ev.clientX;
+      const startWidth = getCssVarPx('--ctx-drawer-width-expanded') ?? CTX_DRAWER_WIDTH_DEFAULT;
+      document.body.classList.add('resizingCtxDrawer');
+
+      try {
+        ctxSplitter.setPointerCapture(ev.pointerId);
+      } catch {
+        // ignore
+      }
+
+      const onMove = (moveEv: PointerEvent) => {
+        const next = clamp(startWidth + (startX - moveEv.clientX), CTX_DRAWER_WIDTH_MIN, CTX_DRAWER_WIDTH_MAX);
+        document.documentElement.style.setProperty('--ctx-drawer-width-expanded', `${next}px`);
+      };
+
+      const onUp = (upEv: PointerEvent) => {
+        window.removeEventListener('pointermove', onMove, true);
+        window.removeEventListener('pointerup', onUp, true);
+        window.removeEventListener('pointercancel', onUp, true);
+        document.body.classList.remove('resizingCtxDrawer');
+        try {
+          ctxSplitter.releasePointerCapture(upEv.pointerId);
+        } catch {
+          // ignore
+        }
+        const width = getCssVarPx('--ctx-drawer-width-expanded') ?? CTX_DRAWER_WIDTH_DEFAULT;
+        void saveCtxDrawerWidth(width);
+      };
+
+      window.addEventListener('pointermove', onMove, true);
+      window.addEventListener('pointerup', onUp, true);
+      window.addEventListener('pointercancel', onUp, true);
+    });
+
+    ctxSplitter.addEventListener('keydown', (ev) => {
+      if (!ctxDrawerOpen) return;
+      if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+      ev.preventDefault();
+      const cur = getCssVarPx('--ctx-drawer-width-expanded') ?? CTX_DRAWER_WIDTH_DEFAULT;
+      const next = clamp(cur + (ev.key === 'ArrowLeft' ? 10 : -10), CTX_DRAWER_WIDTH_MIN, CTX_DRAWER_WIDTH_MAX);
+      document.documentElement.style.setProperty('--ctx-drawer-width-expanded', `${next}px`);
+      void saveCtxDrawerWidth(next);
     });
   }
 

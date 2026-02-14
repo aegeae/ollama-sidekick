@@ -1,3 +1,9 @@
+## [0.8.1](https://github.com/aegeae/ollama-sidekick/compare/v0.8.0...v0.8.1) (2026-02-14)
+
+### Bug Fixes
+
+* **release:** add conventionalcommits preset dependency ([6f06ab0](https://github.com/aegeae/ollama-sidekick/commit/6f06ab02509206730cb63f3d66574f24f3e5492d))
+
 ## [0.7.0](https://github.com/aegeae/ollama-sidekick/compare/v0.6.1...v0.7.0) (2026-02-14)
 
 ### Features

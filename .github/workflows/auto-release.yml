@@ -41,11 +41,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - name: Setup Node.js (20)
+      - name: Setup Node.js (22.14.0)
         if: steps.nvm.outputs.has_nvmrc != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.14.0
           cache: npm
 
       - name: Install

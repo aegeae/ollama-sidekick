@@ -627,6 +627,14 @@ async function getTabInfo(explicitTabId?: number): Promise<TabInfo> {
   }
 }
 
+function getDomainFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
 async function getTabContext(opts: {
   maxChars?: number;
   explicitTabId?: number;
@@ -890,6 +898,41 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
         const tabId = typeof rawTabId === 'number' ? Math.floor(rawTabId) : undefined;
         const tab = await getTabInfo(tabId);
         const resp: BackgroundResponse = { ok: true, type: 'TAB_INFO_GET_RESULT', tab };
+        sendResponse(resp);
+        return;
+      }
+
+      if (message?.type === 'TAB_TARGET_GET') {
+        const rawTabId = typeof message.tabId === 'number' && Number.isFinite(message.tabId) ? message.tabId : undefined;
+        const explicitTabId = typeof rawTabId === 'number' ? Math.floor(rawTabId) : undefined;
+
+        const tabId = await getContextTabId(explicitTabId);
+
+        let title = '';
+        let url = '';
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          title = typeof tab?.title === 'string' ? normalizeWhitespace(tab.title) : '';
+          url = typeof tab?.url === 'string' ? tab.url : '';
+        } catch {
+          title = '';
+          url = '';
+        }
+
+        const restricted = Boolean(url && isRestrictedUrl(url));
+        const hint = restricted ? getRestrictedPageHint(url) ?? 'This page is restricted (Chrome Web Store / browser pages).' : undefined;
+        const domain = url ? getDomainFromUrl(url) : '';
+
+        const resp: BackgroundResponse = {
+          ok: true,
+          type: 'TAB_TARGET_GET_RESULT',
+          tabId,
+          title,
+          url,
+          domain,
+          restricted,
+          hint
+        };
         sendResponse(resp);
         return;
       }

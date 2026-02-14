@@ -63,6 +63,18 @@ type PageMode = 'popup' | 'window';
 let pageMode: PageMode = 'popup';
 let popupActiveTabId: number | null = null;
 
+type TargetInfo = {
+  tabId: number;
+  title: string;
+  url: string;
+  domain: string;
+  restricted: boolean;
+  hint?: string;
+};
+
+let currentTarget: TargetInfo | null = null;
+let lastTargetFetchTabId: number | null = null;
+
 const SESSION_POPOUT_WINDOW_ID_KEY = 'popoutWindowId';
 const SESSION_POPOUT_NAV_TAB_ID_KEY = 'popoutNavTabId';
 const SESSION_POPOUT_NAV_NONCE_KEY = 'popoutNavNonce';
@@ -118,6 +130,76 @@ async function getActiveTabInfo(explicitTabId?: number): Promise<{ title: string
   if (!resp.ok) return { title: '', url: '' };
   if (resp.type !== 'TAB_INFO_GET_RESULT') return { title: '', url: '' };
   return resp.tab;
+}
+
+function setCtxTargetMeta(text: string): void {
+  const el = document.getElementById('ctxTargetMeta') as HTMLSpanElement | null;
+  if (!el) return;
+  el.textContent = text;
+}
+
+function formatTargetTitle(info: TargetInfo): string {
+  const title = info.title.trim();
+  if (title) return title;
+  if (info.restricted) return '(restricted page)';
+  if (info.url.trim()) return '(untitled)';
+  return '(unavailable)';
+}
+
+function formatTargetDomain(info: TargetInfo): string {
+  const domain = info.domain.trim();
+  if (domain) return domain;
+  if (info.restricted) return '(restricted)';
+  if (info.url.trim()) return '(no domain)';
+  return '(unavailable)';
+}
+
+function getTargetSummaryShort(): string {
+  if (!currentTarget) return 'Active tab';
+  const domain = currentTarget.domain.trim();
+  if (domain) return currentTarget.restricted ? `${domain} (restricted)` : domain;
+  const title = currentTarget.title.trim();
+  if (title) return currentTarget.restricted ? `${title} (restricted)` : title;
+  return currentTarget.restricted ? '(restricted)' : 'Active tab';
+}
+
+async function refreshTargetInfo(explicitTabId?: number | null): Promise<void> {
+  const tabId = typeof explicitTabId === 'number' ? explicitTabId : getContextTargetTabId();
+  const reqTabId = tabId ?? undefined;
+
+  try {
+    const resp = await sendMessage({ type: 'TAB_TARGET_GET', tabId: reqTabId });
+    if (!resp.ok) {
+      currentTarget = null;
+      lastTargetFetchTabId = null;
+      setCtxTargetMeta('Target: Active tab');
+      return;
+    }
+    if (resp.type !== 'TAB_TARGET_GET_RESULT') {
+      currentTarget = null;
+      lastTargetFetchTabId = null;
+      setCtxTargetMeta('Target: Active tab');
+      return;
+    }
+
+    currentTarget = {
+      tabId: resp.tabId,
+      title: resp.title,
+      url: resp.url,
+      domain: resp.domain,
+      restricted: resp.restricted,
+      hint: resp.hint
+    };
+    lastTargetFetchTabId = resp.tabId;
+
+    const title = formatTargetTitle(currentTarget);
+    const domain = formatTargetDomain(currentTarget);
+    setCtxTargetMeta(`Target: ${title} · ${domain}`);
+  } catch {
+    currentTarget = null;
+    lastTargetFetchTabId = null;
+    setCtxTargetMeta('Target: Active tab');
+  }
 }
 
 async function getPopupActiveNormalTabId(): Promise<number | null> {
@@ -1968,11 +2050,15 @@ async function refreshConsoleCaptureView(): Promise<void> {
     // Keep using the resolved tab id from background for subsequent operations.
     consoleEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : consoleEffectiveTabId;
 
+    if (typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) && resp.tabId !== lastTargetFetchTabId) {
+      void refreshTargetInfo(resp.tabId);
+    }
+
     const toggleBtn = document.getElementById('consoleCaptureToggleBtn') as HTMLButtonElement | null;
     if (toggleBtn) toggleBtn.textContent = capturing ? 'Stop capturing' : 'Capture console';
 
     setConsoleCaptureMeta(
-      `Active tab · Console: ${capturing ? 'On' : 'Off'} · ${shownLogs.length.toLocaleString()}/${logs.length.toLocaleString()} lines`
+      `Target: ${getTargetSummaryShort()} · Console: ${capturing ? 'On' : 'Off'} · ${shownLogs.length.toLocaleString()}/${logs.length.toLocaleString()} lines`
     );
 
     // Avoid re-rendering the <pre> if nothing changed.
@@ -2168,11 +2254,15 @@ async function refreshNetCaptureView(): Promise<void> {
     // Keep using the resolved tab id from background for subsequent operations.
     netEffectiveTabId = typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) ? resp.tabId : netEffectiveTabId;
 
+    if (typeof resp.tabId === 'number' && Number.isFinite(resp.tabId) && resp.tabId !== lastTargetFetchTabId) {
+      void refreshTargetInfo(resp.tabId);
+    }
+
     const toggleBtn = document.getElementById('netCaptureToggleBtn') as HTMLButtonElement | null;
     if (toggleBtn) toggleBtn.textContent = capturing ? 'Stop capturing' : 'Capture requests';
 
     setNetCaptureMeta(
-      `Active tab · Network: ${capturing ? 'On' : 'Off'} · ${shownLogs.length.toLocaleString()}/${logs.length.toLocaleString()} requests`
+      `Target: ${getTargetSummaryShort()} · Network: ${capturing ? 'On' : 'Off'} · ${shownLogs.length.toLocaleString()}/${logs.length.toLocaleString()} requests`
     );
 
     const tail = shownLogs.length > 0 ? (shownLogs[shownLogs.length - 1]?.url ?? '') : '';
@@ -2316,6 +2406,7 @@ function setCtxDrawerOpen(open: boolean) {
   }
 
   if (open) {
+    void refreshTargetInfo();
     if (diagnosticsMode === 'console') void refreshConsoleCaptureView();
     if (diagnosticsMode === 'network') void refreshNetCaptureView();
   } else {

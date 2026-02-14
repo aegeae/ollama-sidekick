@@ -26,6 +26,7 @@ export type BackgroundRequest =
   | { type: 'OLLAMA_GENERATE'; prompt: string; model?: string }
   | { type: 'OLLAMA_MODEL_INFO_GET'; model: string }
   | { type: 'TAB_INFO_GET'; tabId?: number }
+  | { type: 'TAB_TARGET_GET'; tabId?: number }
   | {
       type: 'TAB_CONTEXT_GET';
       maxChars?: number;
@@ -61,6 +62,16 @@ export type BackgroundResponse =
   | { ok: true; type: 'OLLAMA_GENERATE_RESULT'; text: string }
   | { ok: true; type: 'OLLAMA_MODEL_INFO_GET_RESULT'; model: string; tokenBudget: number | null }
   | { ok: true; type: 'TAB_INFO_GET_RESULT'; tab: TabInfo }
+  | {
+      ok: true;
+      type: 'TAB_TARGET_GET_RESULT';
+      tabId: number;
+      title: string;
+      url: string;
+      domain: string;
+      restricted: boolean;
+      hint?: string;
+    }
   | { ok: true; type: 'TAB_CONTEXT_GET_RESULT'; context: TabContext }
   | { ok: true; type: 'TAB_CONSOLE_CAPTURE_START_RESULT'; tabId: number; capturing: true }
   | { ok: true; type: 'TAB_CONSOLE_CAPTURE_STOP_RESULT'; tabId: number; capturing: false }

@@ -249,6 +249,10 @@ body {
   flex: 1 1 100%;
 }
 
+.contextDrawerControls #ctxTargetMeta {
+  flex: 1 1 100%;
+}
+
 .contextDrawerControls #consoleCaptureMeta {
   flex: 1 1 100%;
 }

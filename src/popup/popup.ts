@@ -1,6 +1,27 @@
 import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
 import { DEFAULT_SETTINGS, getSettings, setSettings, type Settings } from '../lib/settings';
 import { applyUiSettings } from '../lib/uiSettings';
+import {
+  appendMessage,
+  createChat,
+  createFolder,
+  deleteChat,
+  deleteFolder,
+  ensureInitialized,
+  getActiveChat,
+  getChatSummaries,
+  getFolders,
+  getState,
+  moveChatToFolder,
+  renameChat,
+  renameFolder,
+  searchChats,
+  setActiveChat,
+  toggleFolderCollapsed,
+  type ChatStoreStateV1,
+  type ChatSummary,
+  type StoredMessage
+} from '../lib/chatStore';
 
 function $(id: string) {
   const el = document.getElementById(id);
@@ -19,8 +40,48 @@ const POPUP_SIZE_DEFAULT: PopupSize = { width: 380, height: 600 };
 const POPUP_SIZE_MIN: PopupSize = { width: 360, height: 420 };
 const POPUP_SIZE_MAX: PopupSize = { width: 640, height: 900 };
 
+const SIDEBAR_WIDTH_DEFAULT = 220;
+const SIDEBAR_WIDTH_MIN = 200;
+const SIDEBAR_WIDTH_MAX = 420;
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+async function getSavedSidebarPrefs(): Promise<{ width: number; collapsed: boolean }> {
+  const data = await chrome.storage.local.get(['sidebarWidth', 'sidebarCollapsed']);
+  const widthRaw = typeof data.sidebarWidth === 'number' ? data.sidebarWidth : SIDEBAR_WIDTH_DEFAULT;
+  const collapsed = data.sidebarCollapsed === true;
+  return {
+    width: clamp(Math.round(widthRaw), SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX),
+    collapsed
+  };
+}
+
+async function saveSidebarWidth(width: number): Promise<void> {
+  await chrome.storage.local.set({ sidebarWidth: clamp(Math.round(width), SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX) });
+}
+
+async function saveSidebarCollapsed(collapsed: boolean): Promise<void> {
+  await chrome.storage.local.set({ sidebarCollapsed: collapsed });
+}
+
+function applySidebarPrefs(prefs: { width: number; collapsed: boolean }) {
+  document.documentElement.style.setProperty('--sidebar-width-expanded', `${prefs.width}px`);
+  if (prefs.collapsed) {
+    document.documentElement.dataset.sidebarCollapsed = '1';
+  } else {
+    delete document.documentElement.dataset.sidebarCollapsed;
+  }
+
+  const toggle = document.getElementById('sidebarToggleBtn') as HTMLButtonElement | null;
+  if (toggle) {
+    toggle.title = prefs.collapsed ? 'Expand' : 'Collapse';
+    toggle.setAttribute('aria-label', prefs.collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    // Flip chevron direction by rotating the SVG.
+    const svg = toggle.querySelector('svg') as SVGElement | null;
+    if (svg) svg.style.transform = prefs.collapsed ? 'rotate(180deg)' : '';
+  }
 }
 
 function isValidHttpUrl(value: string): boolean {
@@ -108,13 +169,24 @@ type SettingsModelUiSync = {
 
 let settingsModelUiSync: SettingsModelUiSync | null = null;
 
+let chatStoreState: ChatStoreStateV1 | null = null;
+const draftsByChatId = new Map<string, string>();
+
 const state: { messages: ChatMessage[]; generating: boolean } = {
   messages: [],
   generating: false
 };
 
 function uid() {
+  const cryptoObj = globalThis.crypto as Crypto | undefined;
+  if (cryptoObj?.randomUUID) return cryptoObj.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function addMessageWithId(role: ChatRole, text: string, id: string, pending = false): string {
+  state.messages.push({ id, role, text, ts: Date.now(), pending });
+  renderChat();
+  return id;
 }
 
 function scrollChatToBottom() {
@@ -178,6 +250,13 @@ function updateMessage(id: string, patch: Partial<ChatMessage>) {
   renderChat();
 }
 
+function removeMessage(id: string) {
+  const idx = state.messages.findIndex((m) => m.id === id);
+  if (idx < 0) return;
+  state.messages.splice(idx, 1);
+  renderChat();
+}
+
 function setGenerating(isGenerating: boolean) {
   state.generating = isGenerating;
   const btn = $('generateBtn') as HTMLButtonElement;
@@ -185,6 +264,276 @@ function setGenerating(isGenerating: boolean) {
   btn.disabled = isGenerating;
   prompt.disabled = isGenerating;
   btn.classList.toggle('isLoading', isGenerating);
+}
+
+function fmtRelativeTime(ts: number): string {
+  const d = Date.now() - ts;
+  if (d < 60_000) return 'Just now';
+  if (d < 60 * 60_000) return `${Math.round(d / 60_000)}m`;
+  if (d < 24 * 60 * 60_000) return `${Math.round(d / (60 * 60_000))}h`;
+  return `${Math.round(d / (24 * 60 * 60_000))}d`;
+}
+
+function getActiveChatId(): string | null {
+  return chatStoreState?.activeChatId ?? null;
+}
+
+function getActiveChatTitle(): string {
+  const c = chatStoreState ? getActiveChat(chatStoreState) : null;
+  return c?.title ?? 'Chat';
+}
+
+function setActiveChatTitleUi() {
+  const el = document.getElementById('chatTitle') as HTMLDivElement | null;
+  if (!el) return;
+  el.textContent = getActiveChatTitle();
+}
+
+function setMessagesFromActiveChat() {
+  if (!chatStoreState) return;
+  const chat = getActiveChat(chatStoreState);
+  state.messages = [];
+  if (!chat) {
+    renderChat();
+    return;
+  }
+
+  for (const m of chat.messages) {
+    addMessageWithId(m.role as ChatRole, m.text, m.id, false);
+  }
+}
+
+function renderFolderSelect() {
+  const select = document.getElementById('chatFolderSelect') as HTMLSelectElement | null;
+  if (!select || !chatStoreState) return;
+
+  const active = getActiveChat(chatStoreState);
+  const folders = getFolders(chatStoreState);
+  select.innerHTML = '';
+
+  const optUnfiled = document.createElement('option');
+  optUnfiled.value = '';
+  optUnfiled.textContent = 'Unfiled';
+  select.appendChild(optUnfiled);
+
+  for (const f of folders) {
+    const opt = document.createElement('option');
+    opt.value = f.id;
+    opt.textContent = f.name;
+    select.appendChild(opt);
+  }
+
+  select.value = active?.folderId ?? '';
+}
+
+function renderSidebar() {
+  const container = document.getElementById('sidebarList') as HTMLDivElement | null;
+  if (!container || !chatStoreState) return;
+
+  const searchEl = document.getElementById('chatSearch') as HTMLInputElement | null;
+  const query = (searchEl?.value ?? '').trim();
+
+  const folders = getFolders(chatStoreState);
+  const folderById = new Map(folders.map((f) => [f.id, f] as const));
+
+  const summaries: ChatSummary[] = query ? searchChats(chatStoreState, query) : getChatSummaries(chatStoreState);
+  const byFolder = new Map<string | null, ChatSummary[]>();
+  for (const s of summaries) {
+    const key = s.folderId ?? null;
+    const arr = byFolder.get(key) ?? [];
+    arr.push(s);
+    byFolder.set(key, arr);
+  }
+
+  const activeChatId = getActiveChatId();
+  container.innerHTML = '';
+
+  const renderChatList = (list: ChatSummary[]) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'chatList';
+    for (const c of list) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `chatItem${c.id === activeChatId ? ' isActive' : ''}`;
+      btn.dataset.chatId = c.id;
+      btn.draggable = true;
+
+      const title = document.createElement('div');
+      title.className = 'chatItemTitle';
+      title.textContent = c.title;
+
+      const meta = document.createElement('div');
+      meta.className = 'chatItemMeta';
+      meta.textContent = `${fmtRelativeTime(c.updatedAt)} · ${c.lastSnippet || '—'}`;
+
+      btn.appendChild(title);
+      btn.appendChild(meta);
+      wrap.appendChild(btn);
+    }
+    return wrap;
+  };
+
+  const renderFolderBlock = (
+    folderId: string | null,
+    name: string,
+    collapsed: boolean,
+    showTools: boolean
+  ) => {
+    const block = document.createElement('div');
+    block.className = 'folderBlock';
+
+    const header = document.createElement('div');
+    header.className = 'folderHeader';
+    header.dataset.dropFolderId = folderId ?? '';
+
+    const headerBtn = document.createElement('button');
+    headerBtn.type = 'button';
+    headerBtn.className = 'folderHeaderBtn';
+    headerBtn.textContent = `${collapsed ? '▶' : '▼'} ${name}`;
+    if (folderId) headerBtn.dataset.toggleFolderId = folderId;
+    header.appendChild(headerBtn);
+
+    const tools = document.createElement('div');
+    tools.className = 'folderTools';
+
+    if (showTools && folderId) {
+      const mkSvg = (kind: 'rename' | 'delete') => {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('class', 'iconSvg');
+        svg.setAttribute('viewBox', '0 0 16 16');
+        svg.setAttribute('aria-hidden', 'true');
+
+        const mkPath = (d: string, extra: Record<string, string> = {}) => {
+          const p = document.createElementNS(ns, 'path');
+          p.setAttribute('d', d);
+          p.setAttribute('fill', 'none');
+          p.setAttribute('stroke', 'currentColor');
+          for (const [k, v] of Object.entries(extra)) p.setAttribute(k, v);
+          return p;
+        };
+
+        if (kind === 'rename') {
+          svg.appendChild(mkPath('M3 13h3l7-7-3-3-7 7v3Z', { 'stroke-width': '1.2', 'stroke-linejoin': 'round' }));
+          svg.appendChild(mkPath('M9.5 4.5 11.5 6.5', { 'stroke-width': '1.2', 'stroke-linecap': 'round' }));
+        } else {
+          svg.appendChild(
+            mkPath('M3.5 5h9M6.2 5V3.8c0-.4.3-.8.8-.8h2c.4 0 .8.3.8.8V5', {
+              'stroke-width': '1.2',
+              'stroke-linecap': 'round'
+            })
+          );
+          svg.appendChild(
+            mkPath('M5.5 5.5v7c0 .6.4 1 1 1h3c.6 0 1-.4 1-1v-7', {
+              'stroke-width': '1.2',
+              'stroke-linejoin': 'round'
+            })
+          );
+          svg.appendChild(
+            mkPath('M7 7.2v4.6M9 7.2v4.6', {
+              'stroke-width': '1.2',
+              'stroke-linecap': 'round'
+            })
+          );
+        }
+
+        return svg;
+      };
+
+      const renameBtn = document.createElement('button');
+      renameBtn.type = 'button';
+      renameBtn.className = 'iconBtn small';
+      renameBtn.title = 'Rename folder';
+      renameBtn.setAttribute('aria-label', 'Rename folder');
+      renameBtn.dataset.action = 'folder-rename';
+      renameBtn.dataset.folderId = folderId;
+      renameBtn.appendChild(mkSvg('rename'));
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'iconBtn small';
+      delBtn.title = 'Delete folder';
+      delBtn.setAttribute('aria-label', 'Delete folder');
+      delBtn.dataset.action = 'folder-delete';
+      delBtn.dataset.folderId = folderId;
+      delBtn.appendChild(mkSvg('delete'));
+
+      tools.appendChild(renameBtn);
+      tools.appendChild(delBtn);
+    }
+
+    header.appendChild(tools);
+    block.appendChild(header);
+
+    const list = byFolder.get(folderId) ?? [];
+    if (!collapsed) {
+      block.appendChild(renderChatList(list));
+    }
+
+    return block;
+  };
+
+  // Unfiled first.
+  container.appendChild(renderFolderBlock(null, 'Unfiled', false, false));
+
+  for (const f of folders) {
+    const list = byFolder.get(f.id) ?? [];
+    // Hide empty folders when searching to reduce clutter.
+    if (query && list.length === 0) continue;
+    container.appendChild(renderFolderBlock(f.id, f.name, !!f.collapsed, true));
+  }
+
+  // If there are chats only in Unfiled and query is empty, ensure unfiled list shows those.
+  // (We rendered Unfiled above, but it used byFolder which may be empty.)
+  // Re-render unfiled list accurately:
+  const first = container.firstElementChild as HTMLDivElement | null;
+  if (first) {
+    const unfiled = byFolder.get(null) ?? [];
+    const header = first.querySelector('.folderHeaderBtn') as HTMLButtonElement | null;
+    const existingList = first.querySelector('.chatList');
+    if (existingList) existingList.remove();
+    header && (header.textContent = `▼ Unfiled`);
+    first.appendChild(renderChatList(unfiled));
+  }
+}
+
+async function selectChat(chatId: string) {
+  if (!chatStoreState) return;
+
+  const promptEl = document.getElementById('prompt') as HTMLTextAreaElement | null;
+  const prev = getActiveChatId();
+  if (promptEl && prev) draftsByChatId.set(prev, promptEl.value);
+
+  chatStoreState = await setActiveChat(chatId);
+  setActiveChatTitleUi();
+  renderFolderSelect();
+  setMessagesFromActiveChat();
+  renderSidebar();
+
+  if (promptEl) {
+    promptEl.value = draftsByChatId.get(chatId) ?? '';
+    autoGrowTextarea(promptEl);
+    promptEl.focus();
+  }
+}
+
+async function ensureAtLeastOneChat() {
+  chatStoreState = await ensureInitialized();
+  if (!chatStoreState.chats.length) {
+    const { state, chatId } = await createChat(null);
+    chatStoreState = state;
+    // Persist a system message only once per created chat.
+    chatStoreState = await appendMessage(chatId, {
+      role: 'system',
+      text: 'Ready.',
+      ts: Date.now()
+    });
+  }
+  if (!chatStoreState.activeChatId && chatStoreState.chats.length) {
+    // Pick most recent.
+    const summaries = getChatSummaries(chatStoreState);
+    if (summaries[0]) chatStoreState = await setActiveChat(summaries[0].id);
+  }
 }
 
 function getMaxHeightPx(el: HTMLElement): number | null {
@@ -673,6 +1022,12 @@ async function fetchModels(): Promise<string[]> {
 async function onGenerate() {
   if (state.generating) return;
 
+  if (!chatStoreState) {
+    chatStoreState = await getState();
+  }
+  const activeChatId = getActiveChatId();
+  if (!activeChatId) return;
+
   const promptEl = $('prompt') as HTMLTextAreaElement;
   const prompt = promptEl.value;
   const model = ($('modelSelect') as HTMLSelectElement).value;
@@ -685,7 +1040,12 @@ async function onGenerate() {
   promptEl.value = '';
   autoGrowTextarea(promptEl);
 
-  addMessage('user', trimmed);
+  // Persist only what the user typed (not the injected context).
+  const userMsgId = uid();
+  const userMessage: Omit<StoredMessage, 'id'> = { role: 'user', text: trimmed, ts: Date.now(), model };
+  chatStoreState = await appendMessage(activeChatId, { ...userMessage, id: userMsgId });
+  addMessageWithId('user', trimmed, userMsgId);
+
   const thinkingId = addMessage('assistant', 'Thinking…', true);
   setGenerating(true);
 
@@ -704,28 +1064,51 @@ async function onGenerate() {
         }, 1500);
       } catch (e) {
         // Context is optional; show a system message and continue without it.
-        addMessage('system', `Context not attached: ${String((e as any)?.message ?? e)}`);
+        const text = `Context not attached: ${String((e as any)?.message ?? e)}`;
+        const id = uid();
+        chatStoreState = await appendMessage(activeChatId, { role: 'system', text, ts: Date.now(), id });
+        addMessageWithId('system', text, id);
       }
     }
 
     const resp = await sendMessage({ type: 'OLLAMA_GENERATE', prompt: finalPrompt, model });
     if (!resp.ok) {
-      updateMessage(thinkingId, { role: 'error', text: formatError(resp), pending: false });
+      removeMessage(thinkingId);
+      const text = formatError(resp);
+      const id = uid();
+      chatStoreState = await appendMessage(activeChatId, { role: 'error', text, ts: Date.now(), model, id });
+      addMessageWithId('error', text, id);
+      setActiveChatTitleUi();
+      renderSidebar();
       return;
     }
 
     if (resp.type !== 'OLLAMA_GENERATE_RESULT') {
-      updateMessage(thinkingId, { role: 'error', text: 'Unexpected response while generating', pending: false });
+      removeMessage(thinkingId);
+      const text = 'Unexpected response while generating';
+      const id = uid();
+      chatStoreState = await appendMessage(activeChatId, { role: 'error', text, ts: Date.now(), model, id });
+      addMessageWithId('error', text, id);
+      setActiveChatTitleUi();
+      renderSidebar();
       return;
     }
 
-    updateMessage(thinkingId, { text: resp.text || '(empty response)', pending: false });
+    removeMessage(thinkingId);
+    const text = resp.text || '(empty response)';
+    const id = uid();
+    chatStoreState = await appendMessage(activeChatId, { role: 'assistant', text, ts: Date.now(), model, id });
+    addMessageWithId('assistant', text, id);
+    setActiveChatTitleUi();
+    renderSidebar();
   } catch (e) {
-    updateMessage(thinkingId, {
-      role: 'error',
-      text: String((e as any)?.message ?? e),
-      pending: false
-    });
+    removeMessage(thinkingId);
+    const text = String((e as any)?.message ?? e);
+    const id = uid();
+    chatStoreState = await appendMessage(activeChatId, { role: 'error', text, ts: Date.now(), model, id });
+    addMessageWithId('error', text, id);
+    setActiveChatTitleUi();
+    renderSidebar();
   } finally {
     setGenerating(false);
     promptEl.focus();
@@ -773,7 +1156,13 @@ async function main() {
   autoGrowTextarea(promptEl);
   setGenerating(false);
 
-  addMessage('system', 'Ready.');
+  applySidebarPrefs(await getSavedSidebarPrefs());
+
+  await ensureAtLeastOneChat();
+  setActiveChatTitleUi();
+  renderFolderSelect();
+  setMessagesFromActiveChat();
+  renderSidebar();
 
   if (useContextToggle) {
     useContextToggle.addEventListener('change', () => {
@@ -788,6 +1177,287 @@ async function main() {
     await loadModels();
   } catch (e) {
     addMessage('error', `Failed to load models. Is Ollama running?\n${String((e as any)?.message ?? e)}`);
+  }
+
+  // Sidebar interactions
+  const sidebar = document.getElementById('sidebarList') as HTMLDivElement | null;
+  const newChatBtn = document.getElementById('newChatBtn') as HTMLButtonElement | null;
+  const newFolderBtn = document.getElementById('newFolderBtn') as HTMLButtonElement | null;
+  const searchEl = document.getElementById('chatSearch') as HTMLInputElement | null;
+
+  const sidebarToggleBtn = document.getElementById('sidebarToggleBtn') as HTMLButtonElement | null;
+  const splitter = document.getElementById('sidebarSplitter') as HTMLDivElement | null;
+
+  const folderSelect = document.getElementById('chatFolderSelect') as HTMLSelectElement | null;
+  const renameChatBtn = document.getElementById('renameChatBtn') as HTMLButtonElement | null;
+  const deleteChatBtn = document.getElementById('deleteChatBtn') as HTMLButtonElement | null;
+
+  if (sidebarToggleBtn) {
+    sidebarToggleBtn.addEventListener('click', () => {
+      void (async () => {
+        const prefs = await getSavedSidebarPrefs();
+        const next = { ...prefs, collapsed: !prefs.collapsed };
+        applySidebarPrefs(next);
+        await saveSidebarCollapsed(next.collapsed);
+      })();
+    });
+  }
+
+  if (splitter) {
+    const onPointerDown = (ev: PointerEvent) => {
+      // If collapsed, expand first.
+      if (document.documentElement.dataset.sidebarCollapsed === '1') {
+        // Apply immediately for this gesture; persist async.
+        delete document.documentElement.dataset.sidebarCollapsed;
+        void saveSidebarCollapsed(false);
+      }
+
+      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+      ev.preventDefault();
+
+      const startX = ev.clientX;
+      const startWidth = getCssVarPx('--sidebar-width-expanded') ?? SIDEBAR_WIDTH_DEFAULT;
+      document.body.classList.add('resizingSidebar');
+
+      try {
+        splitter.setPointerCapture(ev.pointerId);
+      } catch {
+        // ignore
+      }
+
+      const onMove = (clientX: number) => {
+        const dx = clientX - startX;
+        const next = clamp(Math.round(startWidth + dx), SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
+        document.documentElement.style.setProperty('--sidebar-width-expanded', `${next}px`);
+      };
+
+      const onPointerMove = (e: PointerEvent) => onMove(e.clientX);
+      const onPointerUp = () => {
+        splitter.removeEventListener('pointermove', onPointerMove);
+        splitter.removeEventListener('pointerup', onPointerUp);
+        splitter.removeEventListener('pointercancel', onPointerUp);
+        document.body.classList.remove('resizingSidebar');
+
+        const width = getCssVarPx('--sidebar-width-expanded') ?? SIDEBAR_WIDTH_DEFAULT;
+        void saveSidebarWidth(width);
+      };
+
+      splitter.addEventListener('pointermove', onPointerMove);
+      splitter.addEventListener('pointerup', onPointerUp);
+      splitter.addEventListener('pointercancel', onPointerUp);
+    };
+
+    splitter.addEventListener('pointerdown', onPointerDown);
+    splitter.addEventListener('keydown', (ev) => {
+      if (document.documentElement.dataset.sidebarCollapsed === '1') return;
+      if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+      ev.preventDefault();
+      const cur = getCssVarPx('--sidebar-width-expanded') ?? SIDEBAR_WIDTH_DEFAULT;
+      const next = clamp(cur + (ev.key === 'ArrowRight' ? 10 : -10), SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX);
+      document.documentElement.style.setProperty('--sidebar-width-expanded', `${next}px`);
+      void saveSidebarWidth(next);
+    });
+  }
+
+  if (searchEl) {
+    searchEl.addEventListener('input', () => renderSidebar());
+  }
+
+  if (newChatBtn) {
+    newChatBtn.addEventListener('click', () => {
+      void (async () => {
+        if (!chatStoreState) return;
+        const active = getActiveChat(chatStoreState);
+        const folderId = active?.folderId ?? null;
+        const { state: st, chatId } = await createChat(folderId);
+        chatStoreState = st;
+        chatStoreState = await appendMessage(chatId, { role: 'system', text: 'Ready.', ts: Date.now() });
+        await selectChat(chatId);
+      })();
+    });
+  }
+
+  if (newFolderBtn) {
+    newFolderBtn.addEventListener('click', () => {
+      void (async () => {
+        const name = prompt('Folder name?', 'New folder') ?? '';
+        if (!name.trim()) return;
+        const res = await createFolder(name);
+        chatStoreState = res.state;
+        renderFolderSelect();
+        renderSidebar();
+      })();
+    });
+  }
+
+  if (sidebar) {
+    sidebar.addEventListener('click', (ev) => {
+      const target = ev.target as HTMLElement;
+      const chatBtn = target.closest('.chatItem') as HTMLButtonElement | null;
+      if (chatBtn?.dataset.chatId) {
+        void selectChat(chatBtn.dataset.chatId);
+        return;
+      }
+
+      const folderHeaderBtn = target.closest('.folderHeaderBtn') as HTMLButtonElement | null;
+      if (folderHeaderBtn?.dataset.toggleFolderId) {
+        void (async () => {
+          chatStoreState = await toggleFolderCollapsed(folderHeaderBtn.dataset.toggleFolderId!);
+          renderSidebar();
+        })();
+        return;
+      }
+
+      const actionBtn = target.closest('button[data-action]') as HTMLButtonElement | null;
+      if (actionBtn?.dataset.action && actionBtn.dataset.folderId) {
+        const folderId = actionBtn.dataset.folderId;
+        if (actionBtn.dataset.action === 'folder-rename') {
+          void (async () => {
+            const f = chatStoreState?.folders.find((x) => x.id === folderId);
+            const name = prompt('Rename folder', f?.name ?? '') ?? '';
+            if (!name.trim()) return;
+            chatStoreState = await renameFolder(folderId, name);
+            renderFolderSelect();
+            renderSidebar();
+          })();
+          return;
+        }
+
+        if (actionBtn.dataset.action === 'folder-delete') {
+          void (async () => {
+            const f = chatStoreState?.folders.find((x) => x.id === folderId);
+            const ok = confirm(`Delete folder "${f?.name ?? 'Folder'}"? Chats will be moved to Unfiled.`);
+            if (!ok) return;
+            chatStoreState = await deleteFolder(folderId);
+            renderFolderSelect();
+            renderSidebar();
+          })();
+          return;
+        }
+      }
+    });
+
+    // Drag & drop: move chats into folders
+    let dropHeader: HTMLDivElement | null = null;
+    const clearDrop = () => {
+      if (dropHeader) dropHeader.classList.remove('isDropTarget');
+      dropHeader = null;
+    };
+
+    sidebar.addEventListener('dragstart', (ev) => {
+      const t = ev.target as HTMLElement;
+      const chatEl = t.closest('.chatItem') as HTMLButtonElement | null;
+      if (!chatEl?.dataset.chatId) return;
+      if (!ev.dataTransfer) return;
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData('application/x-ollama-sidekick', JSON.stringify({ type: 'chat', chatId: chatEl.dataset.chatId }));
+    });
+
+    sidebar.addEventListener('dragover', (ev) => {
+      const t = ev.target as HTMLElement;
+      const header = t.closest('.folderHeader') as HTMLDivElement | null;
+      if (!header) return;
+      // Allow drop
+      ev.preventDefault();
+      if (dropHeader !== header) {
+        clearDrop();
+        dropHeader = header;
+        dropHeader.classList.add('isDropTarget');
+      }
+    });
+
+    sidebar.addEventListener('dragleave', (ev) => {
+      const t = ev.target as HTMLElement;
+      const header = t.closest('.folderHeader') as HTMLDivElement | null;
+      if (!header) return;
+      // If leaving the current target header, clear.
+      if (dropHeader === header) {
+        clearDrop();
+      }
+    });
+
+    sidebar.addEventListener('drop', (ev) => {
+      void (async () => {
+        const t = ev.target as HTMLElement;
+        const header = t.closest('.folderHeader') as HTMLDivElement | null;
+        if (!header) return;
+        if (!ev.dataTransfer) return;
+        const raw = ev.dataTransfer.getData('application/x-ollama-sidekick');
+        if (!raw) return;
+        let chatId: string | null = null;
+        try {
+          const parsed = JSON.parse(raw) as { type?: string; chatId?: string };
+          if (parsed.type === 'chat' && typeof parsed.chatId === 'string') chatId = parsed.chatId;
+        } catch {
+          // ignore
+        }
+        if (!chatId) return;
+
+        ev.preventDefault();
+        clearDrop();
+
+        const folderId = header.dataset.dropFolderId || null;
+        chatStoreState = await moveChatToFolder(chatId, folderId);
+        renderFolderSelect();
+        renderSidebar();
+        setActiveChatTitleUi();
+      })();
+    });
+
+    sidebar.addEventListener('dragend', () => clearDrop());
+  }
+
+  if (folderSelect) {
+    folderSelect.addEventListener('change', () => {
+      void (async () => {
+        const id = getActiveChatId();
+        if (!id) return;
+        const folderId = folderSelect.value || null;
+        chatStoreState = await moveChatToFolder(id, folderId);
+        renderFolderSelect();
+        renderSidebar();
+        setActiveChatTitleUi();
+      })();
+    });
+  }
+
+  if (renameChatBtn) {
+    renameChatBtn.addEventListener('click', () => {
+      void (async () => {
+        const id = getActiveChatId();
+        if (!id || !chatStoreState) return;
+        const chat = getActiveChat(chatStoreState);
+        const title = prompt('Rename chat', chat?.title ?? '') ?? '';
+        if (!title.trim()) return;
+        chatStoreState = await renameChat(id, title);
+        setActiveChatTitleUi();
+        renderSidebar();
+      })();
+    });
+  }
+
+  if (deleteChatBtn) {
+    deleteChatBtn.addEventListener('click', () => {
+      void (async () => {
+        const id = getActiveChatId();
+        if (!id) return;
+        const ok = confirm('Delete this chat?');
+        if (!ok) return;
+        chatStoreState = await deleteChat(id);
+        // Pick new active if needed
+        if (chatStoreState.activeChatId) {
+          await selectChat(chatStoreState.activeChatId);
+        } else if (chatStoreState.chats.length) {
+          const summaries = getChatSummaries(chatStoreState);
+          if (summaries[0]) await selectChat(summaries[0].id);
+        } else {
+          await ensureAtLeastOneChat();
+          if (chatStoreState?.activeChatId) await selectChat(chatStoreState.activeChatId);
+        }
+        renderFolderSelect();
+        renderSidebar();
+      })();
+    });
   }
 }
 

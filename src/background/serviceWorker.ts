@@ -101,6 +101,16 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
     try {
       const settings = await getSettings();
 
+      if (!message || typeof message !== 'object' || typeof (message as any).type !== 'string') {
+        const resp: BackgroundResponse = {
+          ok: false,
+          type: 'ERROR',
+          error: { message: 'Invalid message' }
+        };
+        sendResponse(resp);
+        return;
+      }
+
       if (message?.type === 'OLLAMA_LIST_MODELS') {
         const models = await listModels(settings.baseUrl);
         const resp: BackgroundResponse = { ok: true, type: 'OLLAMA_LIST_MODELS_RESULT', models };
@@ -109,7 +119,28 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
       }
 
       if (message?.type === 'OLLAMA_GENERATE') {
-        const model = message.model ?? settings.model;
+        if (typeof message.prompt !== 'string') {
+          const resp: BackgroundResponse = {
+            ok: false,
+            type: 'ERROR',
+            error: { message: 'Invalid prompt' }
+          };
+          sendResponse(resp);
+          return;
+        }
+
+        // Prevent extremely large payloads from being sent to Ollama.
+        if (message.prompt.length > 200_000) {
+          const resp: BackgroundResponse = {
+            ok: false,
+            type: 'ERROR',
+            error: { message: 'Prompt too large' }
+          };
+          sendResponse(resp);
+          return;
+        }
+
+        const model = typeof message.model === 'string' && message.model.trim() ? message.model : settings.model;
         const result = await generate(settings.baseUrl, model, message.prompt);
         const resp: BackgroundResponse = { ok: true, type: 'OLLAMA_GENERATE_RESULT', text: result };
         sendResponse(resp);
@@ -117,7 +148,9 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
       }
 
       if (message?.type === 'TAB_CONTEXT_GET') {
-        const context = await getTabContext(message.maxChars ?? 8000);
+        const rawMax = typeof message.maxChars === 'number' && Number.isFinite(message.maxChars) ? message.maxChars : 8000;
+        const maxChars = Math.max(500, Math.min(20_000, Math.floor(rawMax)));
+        const context = await getTabContext(maxChars);
         const resp: BackgroundResponse = { ok: true, type: 'TAB_CONTEXT_GET_RESULT', context };
         sendResponse(resp);
         return;

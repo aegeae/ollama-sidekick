@@ -4,6 +4,8 @@
 
 A minimal Brave/Chrome (Manifest V3) extension that chats with local Ollama.
 
+This project is fully vibe-coded with GitHub Copilot.
+
 ## Branding
 
 - Name: **Ollama Sidekick**
@@ -64,7 +66,13 @@ In the popup:
 - Toggle **Context** to allow using the current tab’s selection/page text as extra prompt context.
 - Send a message; the context is attached automatically when enabled.
 
-Nothing is persisted by default; context is only extracted on user action.
+Context is only extracted on user action (when you send with **Context** enabled) and is not persisted.
+
+### Chat history (local)
+
+- Conversations are saved locally in the browser via `chrome.storage.local`.
+- Use the left sidebar to create chats, search, and organize chats into folders.
+- Use **Rename** / **Delete** in the header for the active chat.
 
 ### Context menu
 
@@ -114,6 +122,13 @@ Note: the badge will start working after the first push.
 - `activeTab` + `scripting` — extract current page selection/excerpt on-demand when you use Context
 - `contextMenus` — adds “Ask Ollama about selection”
 
+## Security notes
+
+- Chat history is stored locally using `chrome.storage.local` (isolated to this extension; normal websites cannot read it).
+- The extension uses a strict extension-page CSP (`script-src 'self'`) and does not load remote scripts or fonts.
+- Chat history is not encrypted at rest. If someone has access to your browser profile or device, they can likely access it.
+- Malicious extensions or local malware can still exfiltrate data; use a separate browser profile and avoid untrusted extensions if you handle sensitive content.
+
 ## Chrome Web Store
 
 - Privacy policy: `PRIVACY_POLICY.md`
@@ -138,3 +153,12 @@ If the second command returns 403, restart Ollama allowing that origin. A common
 - `OLLAMA_ORIGINS=* ollama serve`
 
 Then reload the extension and retry.
+
+## Manual checklist
+
+- Build: `npm run typecheck` and `npm run build`.
+- Popup: create a new chat, send a message, reload the popup — history remains.
+- Folders: create folder, move chat via folder dropdown, collapse/expand folder.
+- Search: search finds chats by title and message content.
+- Delete: delete a chat; delete a folder moves its chats to **Unfiled**.
+- Context: with **Context** enabled, verify only your typed message is stored (not the injected page excerpt).

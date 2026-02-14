@@ -22,7 +22,8 @@ chrome.runtime.onMessage.addListener((msg: ContentContextRequest, _sender, sendR
   (async () => {
     try {
       if (!msg || msg.type !== 'CONTENT_CONTEXT_GET') return;
-      const maxChars = Number.isFinite(msg.maxChars) ? msg.maxChars : 8000;
+      const rawMax = Number.isFinite(msg.maxChars) ? msg.maxChars : 8000;
+      const maxChars = Math.max(500, Math.min(20_000, Math.floor(rawMax)));
       const context = getContext(maxChars);
       const resp: ContentContextResponse = { ok: true, context };
       sendResponse(resp);

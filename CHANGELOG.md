@@ -1,3 +1,9 @@
+## [0.9.0](https://github.com/aegeae/ollama-sidekick/compare/v0.8.1...v0.9.0) (2026-02-14)
+
+### Features
+
+* **diagnostics:** capture fetch/xhr with optional bodies ([ba0fe54](https://github.com/aegeae/ollama-sidekick/commit/ba0fe5496d932cac5c75c0a2bb09e4577f7cb826))
+
 ## [0.8.1](https://github.com/aegeae/ollama-sidekick/compare/v0.8.0...v0.8.1) (2026-02-14)
 
 ### Bug Fixes

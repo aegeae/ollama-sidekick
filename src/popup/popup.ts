@@ -215,6 +215,22 @@ let settingsModelUiSync: SettingsModelUiSync | null = null;
 let chatStoreState: ChatStoreStateV1 | null = null;
 const draftsByChatId = new Map<string, string>();
 
+type PromptHistoryNavState = {
+  chatId: string | null;
+  index: number | null;
+  draftBeforeHistory: string;
+  applying: boolean;
+  composing: boolean;
+};
+
+const promptHistoryNav: PromptHistoryNavState = {
+  chatId: null,
+  index: null,
+  draftBeforeHistory: '',
+  applying: false,
+  composing: false
+};
+
 const state: { messages: ChatMessage[]; generating: boolean } = {
   messages: [],
   generating: false
@@ -319,6 +335,105 @@ function fmtRelativeTime(ts: number): string {
 
 function getActiveChatId(): string | null {
   return chatStoreState?.activeChatId ?? null;
+}
+
+function resetPromptHistoryNav(nextChatId: string | null) {
+  if (promptHistoryNav.chatId === nextChatId) return;
+  promptHistoryNav.chatId = nextChatId;
+  promptHistoryNav.index = null;
+  promptHistoryNav.draftBeforeHistory = '';
+  promptHistoryNav.applying = false;
+}
+
+function clearPromptHistoryNav() {
+  promptHistoryNav.index = null;
+  promptHistoryNav.draftBeforeHistory = '';
+  promptHistoryNav.applying = false;
+}
+
+function buildUserPromptHistoryForActiveChat(): string[] {
+  if (!chatStoreState) return [];
+  const chat = getActiveChat(chatStoreState);
+  if (!chat) return [];
+
+  const history: string[] = [];
+  let last: string | null = null;
+  for (const m of chat.messages as StoredMessage[]) {
+    if (m.role !== 'user') continue;
+    const text = typeof m.text === 'string' ? m.text : '';
+    if (!text.trim()) continue;
+    if (last === text) continue;
+    history.push(text);
+    last = text;
+  }
+  return history;
+}
+
+function caretIsOnFirstLine(el: HTMLTextAreaElement): boolean {
+  if (el.selectionStart !== el.selectionEnd) return false;
+  const pos = el.selectionStart;
+  if (pos <= 0) return true;
+  return el.value.lastIndexOf('\n', pos - 1) === -1;
+}
+
+function caretIsOnLastLine(el: HTMLTextAreaElement): boolean {
+  if (el.selectionStart !== el.selectionEnd) return false;
+  const pos = el.selectionStart;
+  if (pos >= el.value.length) return true;
+  return el.value.indexOf('\n', pos) === -1;
+}
+
+function applyPromptValue(el: HTMLTextAreaElement, value: string) {
+  promptHistoryNav.applying = true;
+  el.value = value;
+  autoGrowTextarea(el);
+  const end = el.value.length;
+  try {
+    el.setSelectionRange(end, end);
+  } catch {
+    // ignore
+  }
+}
+
+function handlePromptHistoryKey(el: HTMLTextAreaElement, direction: 'up' | 'down'): boolean {
+  if (promptHistoryNav.composing) return false;
+
+  const activeChatId = getActiveChatId();
+  resetPromptHistoryNav(activeChatId);
+  const history = buildUserPromptHistoryForActiveChat();
+  if (history.length === 0) return false;
+
+  if (direction === 'up') {
+    if (!caretIsOnFirstLine(el)) return false;
+
+    if (promptHistoryNav.index == null) {
+      promptHistoryNav.draftBeforeHistory = el.value;
+      promptHistoryNav.index = history.length - 1;
+    } else {
+      promptHistoryNav.index = Math.max(0, promptHistoryNav.index - 1);
+    }
+
+    const idx = Math.min(promptHistoryNav.index, history.length - 1);
+    promptHistoryNav.index = idx;
+    applyPromptValue(el, history[idx] ?? '');
+    return true;
+  }
+
+  // down
+  if (promptHistoryNav.index == null) return false;
+  if (!caretIsOnLastLine(el)) return false;
+
+  if (promptHistoryNav.index < history.length - 1) {
+    promptHistoryNav.index++;
+    applyPromptValue(el, history[promptHistoryNav.index] ?? '');
+    return true;
+  }
+
+  // Past the newest: restore draft.
+  const draft = promptHistoryNav.draftBeforeHistory;
+  clearPromptHistoryNav();
+  applyPromptValue(el, draft);
+  return true;
 }
 
 function getActiveChatTitle(): string {
@@ -588,6 +703,8 @@ async function selectChat(chatId: string) {
     autoGrowTextarea(promptEl);
     promptEl.focus();
   }
+
+  resetPromptHistoryNav(chatId);
 }
 
 async function ensureAtLeastOneChat() {
@@ -1162,6 +1279,9 @@ async function onGenerate() {
   const trimmed = prompt.trim();
   if (!trimmed) return;
 
+  // Sending a message exits prompt history navigation.
+  clearPromptHistoryNav();
+
   promptEl.value = '';
   autoGrowTextarea(promptEl);
 
@@ -1298,8 +1418,37 @@ async function main() {
     settingsModelUiSync?.syncModel(model);
   });
 
-  promptEl.addEventListener('input', () => autoGrowTextarea(promptEl));
+  promptEl.addEventListener('compositionstart', () => {
+    promptHistoryNav.composing = true;
+  });
+  promptEl.addEventListener('compositionend', () => {
+    promptHistoryNav.composing = false;
+  });
+
+  promptEl.addEventListener('input', () => {
+    autoGrowTextarea(promptEl);
+    // If the user types after selecting a history item, exit navigation.
+    if (promptHistoryNav.applying) {
+      promptHistoryNav.applying = false;
+      return;
+    }
+    clearPromptHistoryNav();
+  });
   promptEl.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowUp') {
+      if (handlePromptHistoryKey(promptEl, 'up')) {
+        ev.preventDefault();
+        return;
+      }
+    }
+
+    if (ev.key === 'ArrowDown') {
+      if (handlePromptHistoryKey(promptEl, 'down')) {
+        ev.preventDefault();
+        return;
+      }
+    }
+
     if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault();
       void onGenerate();

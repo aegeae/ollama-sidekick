@@ -11,6 +11,7 @@ test('isRestrictedUrl detects browser/extension/store pages', () => {
   assert.equal(isRestrictedUrl('https://chrome.google.com/webstore/detail/xyz'), true);
   assert.equal(isRestrictedUrl('https://chromewebstore.google.com/detail/xyz'), true);
   assert.equal(isRestrictedUrl('file:///Users/me/test.html'), true);
+  assert.equal(isRestrictedUrl('  CHROME://flags  '), true);
 });
 
 test('isRestrictedUrl allows normal webpages', () => {

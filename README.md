@@ -64,10 +64,9 @@ For Chrome Web Store packaging:
 
 In the popup:
 
-- Toggle **Context** to allow using the current tab’s selection/page text as extra prompt context.
-- Send a message; the context is attached automatically when enabled.
+- Context is attached automatically (best-effort) when you send a message.
 
-Context is only extracted on user action (when you send with **Context** enabled) and is not persisted.
+Context is only extracted on user action (when you send) and is not persisted.
 
 Notes / limitations:
 
@@ -99,6 +98,14 @@ Note: some browsers display the save prompt origin as `chrome-extension://<id>` 
 
 - Run `npm run dev` (watch rebuild)
 - Reload the extension in `brave://extensions` after changes
+
+## Regression checks
+
+Before merging changes (especially `src/popup/*` and `src/background/*`), run:
+
+- `npm run typecheck && npm test && npm run build`
+
+The unit tests are intentionally browser-free: regression-prone logic is kept in small pure helpers under `src/lib/*`.
 
 ## Versioning / release
 

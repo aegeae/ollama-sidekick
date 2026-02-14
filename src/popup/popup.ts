@@ -30,6 +30,9 @@ import {
   supportsFileSystemAccessApi
 } from '../lib/historyExportFs';
 import { computeSidebarWidthExpanded } from '../lib/sidebarResizeMath';
+import { tabTitleToChatTitle } from '../lib/tabTitleToChatTitle';
+import { getChatIdForTab, setChatIdForTab } from '../lib/sessionTabChatMap';
+import { buildPromptWithOptionalContext } from '../lib/promptWithContext';
 
 const FOLDER_UNAVAILABLE_HINT =
   'Folder picker is not available in this browser. Use Export now (download), and enable “Ask where to save each file” in browser download settings if you want to pick a folder.';
@@ -48,6 +51,13 @@ type PopupSize = { width: number; height: number };
 type WindowBounds = { left: number; top: number; width: number; height: number };
 
 type PageMode = 'popup' | 'window';
+
+let pageMode: PageMode = 'popup';
+let popupActiveTabId: number | null = null;
+
+const SESSION_POPOUT_WINDOW_ID_KEY = 'popoutWindowId';
+const SESSION_POPOUT_NAV_TAB_ID_KEY = 'popoutNavTabId';
+const SESSION_POPOUT_NAV_NONCE_KEY = 'popoutNavNonce';
 
 const POPUP_SIZE_DEFAULT: PopupSize = { width: 380, height: 600 };
 const POPUP_SIZE_MIN: PopupSize = { width: 360, height: 420 };
@@ -84,38 +94,220 @@ function getTabIdFromUrl(): number | null {
   return tabId > 0 ? tabId : null;
 }
 
-const SESSION_USE_CONTEXT_ENABLED_KEY = 'useContextEnabled';
-
-function getContextEnabledOverrideFromUrl(): boolean | null {
-  const url = new URL(location.href);
-  const raw = url.searchParams.get('context');
-  if (!raw) return null;
-  if (raw === '1' || raw.toLowerCase() === 'true') return true;
-  if (raw === '0' || raw.toLowerCase() === 'false') return false;
-  return null;
-}
-
-async function getSavedUseContextEnabled(): Promise<boolean> {
-  try {
-    const data = await chrome.storage.session.get([SESSION_USE_CONTEXT_ENABLED_KEY]);
-    return data[SESSION_USE_CONTEXT_ENABLED_KEY] === true;
-  } catch {
-    return false;
-  }
-}
-
-async function setSavedUseContextEnabled(enabled: boolean): Promise<void> {
-  try {
-    await chrome.storage.session.set({ [SESSION_USE_CONTEXT_ENABLED_KEY]: enabled });
-  } catch {
-    // ignore
-  }
-}
-
 function getContextTargetTabId(): number | null {
   // Only use an explicit override when provided (e.g. opened from context menu).
   // Otherwise, let the background resolve the currently active browser tab each time.
   return getTabIdFromUrl();
+}
+
+async function getActiveTabInfo(explicitTabId?: number): Promise<{ title: string; url: string }> {
+  const tabId = typeof explicitTabId === 'number' ? explicitTabId : getContextTargetTabId();
+  const resp = await sendMessage({ type: 'TAB_INFO_GET', tabId: tabId ?? undefined });
+  if (!resp.ok) return { title: '', url: '' };
+  if (resp.type !== 'TAB_INFO_GET_RESULT') return { title: '', url: '' };
+  return resp.tab;
+}
+
+async function getPopupActiveNormalTabId(): Promise<number | null> {
+  if (typeof popupActiveTabId === 'number' && Number.isFinite(popupActiveTabId) && popupActiveTabId > 0) {
+    return popupActiveTabId;
+  }
+
+  try {
+    // Best-effort: should work for active tab when opening the action popup.
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true, windowType: 'normal' });
+    const id = typeof tab?.id === 'number' && Number.isFinite(tab.id) ? tab.id : null;
+    popupActiveTabId = id;
+    return id;
+  } catch {
+    popupActiveTabId = null;
+    return null;
+  }
+}
+
+async function getSessionPopoutWindowId(): Promise<number | null> {
+  try {
+    const data = await chrome.storage.session.get([SESSION_POPOUT_WINDOW_ID_KEY]);
+    const id = data?.[SESSION_POPOUT_WINDOW_ID_KEY];
+    if (typeof id !== 'number' || !Number.isFinite(id)) return null;
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+async function setSessionPopoutWindowId(windowId: number | null): Promise<void> {
+  try {
+    if (typeof windowId === 'number' && Number.isFinite(windowId)) {
+      await chrome.storage.session.set({ [SESSION_POPOUT_WINDOW_ID_KEY]: windowId });
+    } else {
+      await chrome.storage.session.remove([SESSION_POPOUT_WINDOW_ID_KEY]);
+    }
+  } catch {
+    // Best-effort.
+  }
+}
+
+async function requestPopoutNavigateToTab(tabId: number): Promise<void> {
+  try {
+    await chrome.storage.session.set({
+      [SESSION_POPOUT_NAV_TAB_ID_KEY]: tabId,
+      [SESSION_POPOUT_NAV_NONCE_KEY]: Date.now()
+    });
+  } catch {
+    // Best-effort.
+  }
+}
+
+async function buildPopoutUrlForTab(tabId: number | null): Promise<string> {
+  const url = new URL(chrome.runtime.getURL('src/popup/popup.html'));
+  url.searchParams.set('mode', 'window');
+
+  if (tabId != null) {
+    url.searchParams.set('tabId', String(tabId));
+    const mappedChatId = await getChatIdForTab(tabId);
+    if (mappedChatId) url.searchParams.set('chatId', mappedChatId);
+  } else {
+    const activeChatId = getActiveChatId();
+    if (activeChatId) url.searchParams.set('chatId', activeChatId);
+  }
+
+  return url.toString();
+}
+
+async function openOrFocusPopoutWindowForTab(tabId: number | null): Promise<void> {
+  const existingId = await getSessionPopoutWindowId();
+  if (existingId != null) {
+    try {
+      const win = await chrome.windows.get(existingId);
+      if (win?.id == null) throw new Error('Missing pop-out window id');
+      await chrome.windows.update(win.id, { focused: true });
+      if (tabId != null) await requestPopoutNavigateToTab(tabId);
+      return;
+    } catch {
+      // Stale id; fall through to creating a new window.
+    }
+
+    await setSessionPopoutWindowId(null);
+  }
+
+  const bounds = (await getSavedChatWindowBounds()) ?? {
+    left: 80,
+    top: 80,
+    ...getCurrentPopupSize()
+  };
+
+  const created = await chrome.windows.create({
+    url: await buildPopoutUrlForTab(tabId),
+    type: 'popup',
+    left: Math.round(bounds.left),
+    top: Math.round(bounds.top),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height)
+  });
+
+  if (created?.id != null) {
+    await setSessionPopoutWindowId(created.id);
+  }
+}
+
+function isEmptyConversation(chat: { messages: StoredMessage[] } | null): boolean {
+  if (!chat) return false;
+  return !chat.messages.some((m) => m.role === 'user' || m.role === 'assistant');
+}
+
+async function ensureChatForActiveTabOnOpen(): Promise<void> {
+  if (pageMode !== 'popup') return;
+  if (!chatStoreState) return;
+
+  const tabId = await getPopupActiveNormalTabId();
+  if (tabId == null) return;
+
+  const mappedChatId = await getChatIdForTab(tabId);
+  if (mappedChatId && chatStoreState.chats.some((c) => c.id === mappedChatId)) {
+    if (chatStoreState.activeChatId !== mappedChatId) {
+      await selectChat(mappedChatId);
+    }
+    return;
+  }
+
+  // Avoid creating a duplicate chat on a fresh install when ensureAtLeastOneChat() already created the first empty chat.
+  const active = getActiveChat(chatStoreState);
+  if (chatStoreState.chats.length === 1 && active && isEmptyConversation(active)) {
+    void setChatIdForTab(tabId, active.id);
+    return;
+  }
+
+  const folderId = active?.folderId ?? null;
+  const { state: st, chatId } = await createChat(folderId);
+  chatStoreState = st;
+
+  try {
+    const info = await getActiveTabInfo(tabId);
+    const nextTitle = tabTitleToChatTitle(info.title);
+    if (nextTitle) chatStoreState = await renameChat(chatId, nextTitle);
+  } catch {
+    // ignore
+  }
+
+  chatStoreState = await appendMessage(chatId, { role: 'system', text: 'Ready.', ts: Date.now() });
+  void setChatIdForTab(tabId, chatId);
+  await selectChat(chatId);
+}
+
+async function ensureChatForUrlTabOnOpen(): Promise<void> {
+  if (!chatStoreState) return;
+
+  // Window mode doesn't know the active browser tab; only act if we were given a tabId.
+  const tabId = getTabIdFromUrl();
+  if (tabId == null) return;
+
+  const mappedChatId = await getChatIdForTab(tabId);
+  if (mappedChatId && chatStoreState.chats.some((c) => c.id === mappedChatId)) {
+    if (chatStoreState.activeChatId !== mappedChatId) {
+      await selectChat(mappedChatId);
+    }
+    return;
+  }
+
+  const active = getActiveChat(chatStoreState);
+  const folderId = active?.folderId ?? null;
+  const { state: st, chatId } = await createChat(folderId);
+  chatStoreState = st;
+
+  try {
+    const info = await getActiveTabInfo(tabId);
+    const nextTitle = tabTitleToChatTitle(info.title);
+    if (nextTitle) chatStoreState = await renameChat(chatId, nextTitle);
+  } catch {
+    // ignore
+  }
+
+  chatStoreState = await appendMessage(chatId, { role: 'system', text: 'Ready.', ts: Date.now() });
+  void setChatIdForTab(tabId, chatId);
+  await selectChat(chatId);
+}
+
+function canAutoNameChatFromTab(chat: { title: string; messages: StoredMessage[] } | null): boolean {
+  if (!chat) return false;
+  if (chat.title !== 'New chat') return false;
+  // Allow initial system messages (e.g. "Ready."), but don't rename real conversations.
+  return !chat.messages.some((m) => m.role === 'user' || m.role === 'assistant');
+}
+
+async function maybeAutoNameActiveChatFromTabTitle(): Promise<void> {
+  if (!chatStoreState) return;
+  const active = getActiveChat(chatStoreState);
+  if (!canAutoNameChatFromTab(active)) return;
+
+  try {
+    const info = await getActiveTabInfo();
+    const nextTitle = tabTitleToChatTitle(info.title);
+    if (!nextTitle) return;
+    chatStoreState = await renameChat(active!.id, nextTitle);
+  } catch {
+    // Best-effort only; chat naming shouldn't block UI.
+  }
 }
 
 async function getSavedSidebarPrefs(): Promise<{ width: number; collapsed: boolean }> {
@@ -759,6 +951,17 @@ async function selectChat(chatId: string) {
   }
 
   resetPromptHistoryNav(chatId);
+
+  // In popup mode, keep per-tab chat mapping aligned with the user's selection.
+  if (pageMode === 'popup') {
+    void (async () => {
+      const tabId = await getPopupActiveNormalTabId();
+      if (tabId != null) await setChatIdForTab(tabId, chatId);
+    })();
+  } else {
+    const tabId = getTabIdFromUrl();
+    if (tabId != null) void setChatIdForTab(tabId, chatId);
+  }
 }
 
 async function ensureAtLeastOneChat() {
@@ -766,6 +969,16 @@ async function ensureAtLeastOneChat() {
   if (!chatStoreState.chats.length) {
     const { state, chatId } = await createChat(null);
     chatStoreState = state;
+
+    // Name the first chat after the active tab, best-effort.
+    try {
+      const info = await getActiveTabInfo();
+      const nextTitle = tabTitleToChatTitle(info.title);
+      if (nextTitle) chatStoreState = await renameChat(chatId, nextTitle);
+    } catch {
+      // ignore
+    }
+
     // Persist a system message only once per created chat.
     chatStoreState = await appendMessage(chatId, {
       role: 'system',
@@ -925,33 +1138,8 @@ function setupPopupResize() {
 }
 
 async function openPopoutWindow() {
-  const bounds = (await getSavedChatWindowBounds()) ?? {
-    left: 80,
-    top: 80,
-    ...getCurrentPopupSize()
-  };
-
-  const url = new URL(chrome.runtime.getURL('src/popup/popup.html'));
-  url.searchParams.set('mode', 'window');
-  const activeChatId = getActiveChatId();
-  if (activeChatId) url.searchParams.set('chatId', activeChatId);
-  const tabId = getContextTargetTabId();
-  if (typeof tabId === 'number') url.searchParams.set('tabId', String(tabId));
-
-  // Keep context toggle consistent between popup and pop-out.
-  const useContextEl = document.getElementById('useContextToggle') as HTMLInputElement | null;
-  const enabled = useContextEl ? useContextEl.checked : await getSavedUseContextEnabled();
-  if (enabled) url.searchParams.set('context', '1');
-  void setSavedUseContextEnabled(enabled);
-
-  await chrome.windows.create({
-    url: url.toString(),
-    type: 'popup',
-    left: Math.round(bounds.left),
-    top: Math.round(bounds.top),
-    width: Math.round(bounds.width),
-    height: Math.round(bounds.height)
-  });
+  const tabId = pageMode === 'popup' ? await getPopupActiveNormalTabId() : getContextTargetTabId();
+  await openOrFocusPopoutWindowForTab(tabId);
 }
 
 function startWindowBoundsPersistence(mode: PageMode) {
@@ -1001,6 +1189,70 @@ async function openCompactWindow() {
   });
 }
 
+function startPopoutNavigationListener(): void {
+  if (pageMode !== 'window') return;
+
+  let lastSeenNonce: number | null = null;
+
+  const maybeNavigate = async (tabId: number) => {
+    const current = getTabIdFromUrl();
+    if (current === tabId) return;
+
+    const mappedChatId = await getChatIdForTab(tabId);
+
+    const url = new URL(location.href);
+    url.searchParams.set('mode', 'window');
+    url.searchParams.set('tabId', String(tabId));
+    if (mappedChatId) url.searchParams.set('chatId', mappedChatId);
+    else url.searchParams.delete('chatId');
+
+    // Avoid accidental auto-send when switching contexts.
+    url.searchParams.delete('prompt');
+    url.searchParams.delete('auto');
+
+    location.href = url.toString();
+  };
+
+  const checkNow = async () => {
+    try {
+      const data = await chrome.storage.session.get([
+        SESSION_POPOUT_NAV_TAB_ID_KEY,
+        SESSION_POPOUT_NAV_NONCE_KEY
+      ]);
+
+      const nonceRaw = data?.[SESSION_POPOUT_NAV_NONCE_KEY];
+      const nonce = typeof nonceRaw === 'number' && Number.isFinite(nonceRaw) ? nonceRaw : null;
+      const tabIdRaw = data?.[SESSION_POPOUT_NAV_TAB_ID_KEY];
+      const tabId = typeof tabIdRaw === 'number' && Number.isFinite(tabIdRaw) ? Math.floor(tabIdRaw) : null;
+      if (nonce == null || tabId == null || tabId <= 0) return;
+
+      if (lastSeenNonce == null) {
+        // Initialize without navigating on stale values.
+        lastSeenNonce = nonce;
+        return;
+      }
+
+      if (nonce === lastSeenNonce) return;
+      lastSeenNonce = nonce;
+      await maybeNavigate(tabId);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Primary: listen for changes.
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'session') return;
+    if (!changes[SESSION_POPOUT_NAV_NONCE_KEY]) return;
+    void checkNow();
+  });
+
+  // Fallback: poll in case the event is missed.
+  void checkNow();
+  const t = window.setInterval(() => void checkNow(), 500);
+  window.addEventListener('beforeunload', () => window.clearInterval(t));
+}
+
 function setupSettingsModal(onSaved: () => void) {
   const overlay = document.getElementById('settingsOverlay') as HTMLDivElement | null;
   const openBtn = document.getElementById('settingsBtn') as HTMLButtonElement | null;
@@ -1016,6 +1268,7 @@ function setupSettingsModal(onSaved: () => void) {
   const themeEl = document.getElementById('settingsTheme') as HTMLSelectElement | null;
   const fontEl = document.getElementById('settingsFontFamily') as HTMLSelectElement | null;
   const sizeEl = document.getElementById('settingsFontSize') as HTMLInputElement | null;
+  const alwaysOpenPopoutEl = document.getElementById('settingsAlwaysOpenPopout') as HTMLInputElement | null;
 
   const historyModeEl = document.getElementById('settingsHistoryStorageMode') as HTMLSelectElement | null;
   const historyFormatEl = document.getElementById('settingsHistoryExportFormat') as HTMLSelectElement | null;
@@ -1028,7 +1281,7 @@ function setupSettingsModal(onSaved: () => void) {
   const historyExportStatusEl = document.getElementById('settingsHistoryExportStatus') as HTMLSpanElement | null;
 
   if (!overlay || !openBtn || !closeBtn || !cancelBtn || !saveBtn || !resetBtn) return;
-  if (!baseUrlEl || !modelSelectEl || !modelCustomEl || !themeEl || !fontEl || !sizeEl || !statusEl) return;
+  if (!baseUrlEl || !modelSelectEl || !modelCustomEl || !themeEl || !fontEl || !sizeEl || !alwaysOpenPopoutEl || !statusEl) return;
   if (!historyModeEl || !historyFormatEl || !historyAutoEl) return;
   if (!historyFolderRow || !chooseHistoryFolderBtn || !clearHistoryFolderBtn || !historyFolderStatusEl) return;
   if (!exportHistoryBtn || !historyExportStatusEl) return;
@@ -1114,6 +1367,7 @@ function setupSettingsModal(onSaved: () => void) {
     themeEl.value = s.theme;
     fontEl.value = s.fontFamily;
     sizeEl.value = String(s.fontSize);
+    alwaysOpenPopoutEl.checked = s.alwaysOpenPopout;
 
     historyModeEl.value = s.historyStorageMode;
     historyFormatEl.value = s.historyExportFormat;
@@ -1313,6 +1567,7 @@ function setupSettingsModal(onSaved: () => void) {
         const theme = themeEl.value as Settings['theme'];
         const fontFamily = fontEl.value as Settings['fontFamily'];
         const fontSize = Number.parseInt(sizeEl.value, 10);
+        const alwaysOpenPopout = alwaysOpenPopoutEl.checked;
 
         const historyStorageMode = historyModeEl.value as Settings['historyStorageMode'];
         const historyExportFormat = historyFormatEl.value as Settings['historyExportFormat'];
@@ -1331,6 +1586,7 @@ function setupSettingsModal(onSaved: () => void) {
           theme,
           fontFamily,
           fontSize,
+          alwaysOpenPopout,
           historyStorageMode,
           historyExportFormat,
           historyAutoExportOnSend
@@ -1370,6 +1626,7 @@ function setupSettingsModal(onSaved: () => void) {
         themeEl.value = s.theme;
         fontEl.value = s.fontFamily;
         sizeEl.value = String(s.fontSize);
+        alwaysOpenPopoutEl.checked = s.alwaysOpenPopout;
 
         historyModeEl.value = s.historyStorageMode;
         historyFormatEl.value = s.historyExportFormat;
@@ -1423,24 +1680,6 @@ async function getTabContext(maxChars = 8000): Promise<TabContext> {
   if (!resp.ok) throw new Error(formatError(resp));
   if (resp.type !== 'TAB_CONTEXT_GET_RESULT') throw new Error('Unexpected response while reading tab context');
   return resp.context;
-}
-
-function buildContextBlock(ctx: TabContext): string {
-  const selection = ctx.selection?.trim();
-  const excerpt = ctx.textExcerpt?.trim();
-  const body = selection || excerpt || '';
-  const clipped = body.length > 2000 ? body.slice(0, 2000) + '…' : body;
-
-  return [
-    'Context (active tab):',
-    `Title: ${ctx.title}`,
-    `URL: ${ctx.url}`,
-    '',
-    '```',
-    clipped,
-    '```',
-    ''
-  ].join('\n');
 }
 
 async function maybeAutoExportHistoryAfterSend(): Promise<void> {
@@ -1521,8 +1760,6 @@ async function onGenerate() {
   const prompt = promptEl.value;
   const model = ($('modelSelect') as HTMLSelectElement).value;
 
-  const useContext = (document.getElementById('useContextToggle') as HTMLInputElement | null)?.checked ?? false;
-
   const trimmed = prompt.trim();
   if (!trimmed) return;
 
@@ -1543,24 +1780,19 @@ async function onGenerate() {
 
   try {
     let finalPrompt = trimmed;
-    if (useContext) {
-      try {
-        const ctx = await getTabContext(8000);
-        finalPrompt = buildContextBlock(ctx) + trimmed;
-        setContextBadge('Context attached', true);
-        // After a moment, revert badge text but keep visible while enabled.
-        setTimeout(() => {
-          const stillEnabled =
-            (document.getElementById('useContextToggle') as HTMLInputElement | null)?.checked ?? false;
-          setContextBadge(stillEnabled ? 'Context on' : 'Context off', stillEnabled);
-        }, 1500);
-      } catch (e) {
-        // Context is optional; show a system message and continue without it.
-        const text = `Context not attached: ${formatContextAttachError(e)}`;
-        const id = uid();
-        chatStoreState = await appendMessage(activeChatId, { role: 'system', text, ts: Date.now(), id });
-        addMessageWithId('system', text, id);
-      }
+    try {
+      const ctx = await getTabContext(8000);
+      finalPrompt = buildPromptWithOptionalContext(trimmed, ctx);
+      setContextBadge('Context attached', true);
+      setTimeout(() => setContextBadge('Context on', true), 1500);
+    } catch (e) {
+      // Context is best-effort; show a system message and continue without it.
+      const text = `Context not attached: ${formatContextAttachError(e)}`;
+      const id = uid();
+      chatStoreState = await appendMessage(activeChatId, { role: 'system', text, ts: Date.now(), id });
+      addMessageWithId('system', text, id);
+      setContextBadge('Context unavailable', true);
+      setTimeout(() => setContextBadge('Context on', true), 2000);
     }
 
     const resp = await sendMessage({ type: 'OLLAMA_GENERATE', prompt: finalPrompt, model });
@@ -1610,7 +1842,10 @@ async function onGenerate() {
 
 async function main() {
   const mode = getPageModeFromUrl();
+  pageMode = mode;
   document.documentElement.dataset.mode = mode;
+
+  startPopoutNavigationListener();
 
   if (mode !== 'window') {
     applyPopupSize((await getSavedPopupSize()) ?? POPUP_SIZE_DEFAULT);
@@ -1620,12 +1855,20 @@ async function main() {
   }
 
   // Apply theme + typography ASAP.
-  applyUiSettings(await getSettings());
+  const settings = await getSettings();
+  applyUiSettings(settings);
+
+  // Auto pop-out: open/focus window mode and close the action popup.
+  if (mode === 'popup' && settings.alwaysOpenPopout) {
+    const tabId = await getPopupActiveNormalTabId();
+    await openOrFocusPopoutWindowForTab(tabId);
+    window.close();
+    return;
+  }
 
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
   const modelSelect = $('modelSelect') as HTMLSelectElement;
-  const useContextToggle = document.getElementById('useContextToggle') as HTMLInputElement | null;
   const popoutBtn = document.getElementById('popoutBtn') as HTMLButtonElement | null;
   const popinBtn = document.getElementById('popinBtn') as HTMLButtonElement | null;
 
@@ -1709,24 +1952,20 @@ async function main() {
   applySidebarPrefs(await getSavedSidebarPrefs());
 
   await ensureAtLeastOneChat();
+
+  // When reopening the popup on a different tab, switch/create a new chat for that tab.
+  await ensureChatForActiveTabOnOpen();
+
+  // In window mode, optionally switch/create a chat for the provided tabId.
+  await ensureChatForUrlTabOnOpen();
+
   setActiveChatTitleUi();
   renderFolderSelect();
   setMessagesFromActiveChat();
   renderSidebar();
 
-  if (useContextToggle) {
-    const override = getContextEnabledOverrideFromUrl();
-    const enabled = override ?? (await getSavedUseContextEnabled());
-    useContextToggle.checked = enabled;
-    setContextBadge(enabled ? 'Context on' : 'Context off', enabled);
-    if (override != null) void setSavedUseContextEnabled(enabled);
-
-    useContextToggle.addEventListener('change', () => {
-      const next = useContextToggle.checked;
-      void setSavedUseContextEnabled(next);
-      setContextBadge(next ? 'Context on' : 'Context off', next);
-    });
-  }
+  // Context is always-on by default.
+  setContextBadge('Context on', true);
 
   try {
     await loadModels();
@@ -1739,6 +1978,12 @@ async function main() {
   if (qs.chatId && qs.chatId !== getActiveChatId()) {
     await selectChat(qs.chatId);
   }
+
+  // Auto-name a brand-new chat from the active tab title.
+  await maybeAutoNameActiveChatFromTabTitle();
+  setActiveChatTitleUi();
+  renderSidebar();
+
   if (qs.prompt.trim()) {
     promptEl.value = qs.prompt;
     autoGrowTextarea(promptEl);
@@ -1876,6 +2121,15 @@ async function main() {
         const folderId = active?.folderId ?? null;
         const { state: st, chatId } = await createChat(folderId);
         chatStoreState = st;
+        await (async () => {
+          try {
+            const info = await getActiveTabInfo();
+            const nextTitle = tabTitleToChatTitle(info.title);
+            if (nextTitle) chatStoreState = await renameChat(chatId, nextTitle);
+          } catch {
+            // ignore
+          }
+        })();
         chatStoreState = await appendMessage(chatId, { role: 'system', text: 'Ready.', ts: Date.now() });
         await selectChat(chatId);
       })();

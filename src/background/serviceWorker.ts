@@ -1,10 +1,11 @@
 import { getSettings } from '../lib/settings';
 import { listModels, generate, HttpError } from '../lib/ollamaClient';
 import { getRestrictedPageHint, isRestrictedUrl } from '../lib/restrictedUrl';
-import type { BackgroundRequest, BackgroundResponse } from '../types/messages';
+import type { BackgroundRequest, BackgroundResponse, TabInfo } from '../types/messages';
 
 const SESSION_LAST_USER_TAB_ID_KEY = 'lastUserTabId';
 const SESSION_LAST_NORMAL_WINDOW_ID_KEY = 'lastNormalWindowId';
+const SESSION_POPOUT_WINDOW_ID_KEY = 'popoutWindowId';
 
 let lastFocusedNormalWindowId: number | null = null;
 
@@ -46,6 +47,23 @@ function toErrorResponse(err: unknown): BackgroundResponse {
     error: { message: err instanceof Error ? err.message : String(err) }
   };
 }
+
+async function clearPopoutWindowIdIfMatches(windowId: number): Promise<void> {
+  try {
+    const data = await chrome.storage.session.get([SESSION_POPOUT_WINDOW_ID_KEY]);
+    const existing = data?.[SESSION_POPOUT_WINDOW_ID_KEY];
+    if (typeof existing !== 'number' || !Number.isFinite(existing)) return;
+    if (existing !== windowId) return;
+    await chrome.storage.session.remove([SESSION_POPOUT_WINDOW_ID_KEY]);
+  } catch {
+    // Best-effort.
+  }
+}
+
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (typeof windowId !== 'number' || !Number.isFinite(windowId)) return;
+  void clearPopoutWindowIdIfMatches(windowId);
+});
 
 async function getActiveTabId(): Promise<number> {
   // Avoid selecting extension windows / popups by constraining to normal windows.
@@ -156,6 +174,19 @@ async function getContextTabId(explicitTabId?: number): Promise<number> {
 
 function normalizeWhitespace(text: string) {
   return text.replace(/\s+/g, ' ').trim();
+}
+
+async function getTabInfo(explicitTabId?: number): Promise<TabInfo> {
+  const tabId = await getContextTabId(explicitTabId);
+
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const title = typeof tab?.title === 'string' ? normalizeWhitespace(tab.title) : '';
+    const url = typeof tab?.url === 'string' ? tab.url : '';
+    return { title, url };
+  } catch {
+    return { title: '', url: '' };
+  }
 }
 
 async function getTabContext(maxChars = 8000, explicitTabId?: number) {
@@ -363,6 +394,15 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
 
         const result = await generate(settings.baseUrl, modelToUse, message.prompt);
         const resp: BackgroundResponse = { ok: true, type: 'OLLAMA_GENERATE_RESULT', text: result };
+        sendResponse(resp);
+        return;
+      }
+
+      if (message?.type === 'TAB_INFO_GET') {
+        const rawTabId = typeof message.tabId === 'number' && Number.isFinite(message.tabId) ? message.tabId : undefined;
+        const tabId = typeof rawTabId === 'number' ? Math.floor(rawTabId) : undefined;
+        const tab = await getTabInfo(tabId);
+        const resp: BackgroundResponse = { ok: true, type: 'TAB_INFO_GET_RESULT', tab };
         sendResponse(resp);
         return;
       }

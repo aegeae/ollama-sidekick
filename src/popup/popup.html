@@ -17,12 +17,6 @@
         <div class="controls">
           <select id="modelSelect" class="model" aria-label="Model"></select>
 
-          <label class="toggle" title="Use current page as context">
-            <input id="useContextToggle" type="checkbox" />
-            <span class="toggleUi" aria-hidden="true"></span>
-            <span class="toggleLabel">Context</span>
-          </label>
-
           <button id="popoutBtn" class="iconBtn" type="button" title="Pop out (movable window)" aria-label="Pop out">
             <svg class="iconSvg" viewBox="0 0 16 16" aria-hidden="true">
               <path
@@ -250,6 +244,15 @@
             <label class="formLabel">
               Font size
               <input id="settingsFontSize" class="formInput" type="number" inputmode="numeric" min="11" max="20" step="1" />
+            </label>
+
+            <label class="formLabel">
+              <span>Always open in pop-out window</span>
+              <label class="toggle" title="When enabled, clicking the extension icon opens the pop-out window and closes the popup">
+                <input id="settingsAlwaysOpenPopout" type="checkbox" />
+                <span class="toggleUi" aria-hidden="true"></span>
+                <span class="toggleLabel">Pop-out</span>
+              </label>
             </label>
 
             <label class="formLabel">

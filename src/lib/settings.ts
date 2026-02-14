@@ -11,8 +11,7 @@ export async function getSettings(): Promise<Settings> {
     'fontFamily',
     'fontSize',
     'historyStorageMode',
-    'historyExportFormat',
-    'alwaysOpenPopout'
+    'historyExportFormat'
   ]);
 
   return coerceSettingsFromStorage(data);

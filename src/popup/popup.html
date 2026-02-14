@@ -10,38 +10,12 @@
     <main class="app">
       <header class="topbar">
         <div class="title">
-          Ollama Sidekick
+          Sidekick
           <span id="contextBadge" class="badge" hidden>Context off</span>
         </div>
 
         <div class="controls">
           <select id="modelSelect" class="model" aria-label="Model"></select>
-
-          <button id="popoutBtn" class="iconBtn" type="button" title="Pop out (movable window)" aria-label="Pop out">
-            <svg class="iconSvg" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M5.5 3.5 10 8l-4.5 4.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
-
-          <button id="popinBtn" class="iconBtn" type="button" title="Pop in (compact window)" aria-label="Pop in">
-            <svg class="iconSvg" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M10.5 3.5 6 8l4.5 4.5"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
 
           <button id="settingsBtn" class="miniBtn" type="button" title="Settings">
             Settings
@@ -244,15 +218,6 @@
             <label class="formLabel">
               Font size
               <input id="settingsFontSize" class="formInput" type="number" inputmode="numeric" min="11" max="20" step="1" />
-            </label>
-
-            <label class="formLabel">
-              <span>Always open in pop-out window</span>
-              <label class="toggle" title="When enabled, clicking the extension icon opens the pop-out window and closes the popup">
-                <input id="settingsAlwaysOpenPopout" type="checkbox" />
-                <span class="toggleUi" aria-hidden="true"></span>
-                <span class="toggleLabel">Pop-out</span>
-              </label>
             </label>
 
             <label class="formLabel">

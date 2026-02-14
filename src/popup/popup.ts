@@ -1137,11 +1137,6 @@ function setupPopupResize() {
   }
 }
 
-async function openPopoutWindow() {
-  const tabId = pageMode === 'popup' ? await getPopupActiveNormalTabId() : getContextTargetTabId();
-  await openOrFocusPopoutWindowForTab(tabId);
-}
-
 function startWindowBoundsPersistence(mode: PageMode) {
   if (mode !== 'window') return;
 
@@ -1167,25 +1162,6 @@ function startWindowBoundsPersistence(mode: PageMode) {
   window.addEventListener('beforeunload', () => {
     window.clearInterval(t);
     save();
-  });
-}
-
-async function openCompactWindow() {
-  const size = (await getSavedPopupSize()) ?? POPUP_SIZE_DEFAULT;
-  const bounds = (await getSavedChatWindowBounds()) ?? { left: 120, top: 120, ...size };
-
-  const url = new URL(chrome.runtime.getURL('src/popup/popup.html'));
-  url.searchParams.set('mode', 'popup');
-  const activeChatId = getActiveChatId();
-  if (activeChatId) url.searchParams.set('chatId', activeChatId);
-
-  await chrome.windows.create({
-    url: url.toString(),
-    type: 'popup',
-    left: Math.round(bounds.left),
-    top: Math.round(bounds.top),
-    width: Math.round(size.width),
-    height: Math.round(size.height)
   });
 }
 
@@ -1268,7 +1244,6 @@ function setupSettingsModal(onSaved: () => void) {
   const themeEl = document.getElementById('settingsTheme') as HTMLSelectElement | null;
   const fontEl = document.getElementById('settingsFontFamily') as HTMLSelectElement | null;
   const sizeEl = document.getElementById('settingsFontSize') as HTMLInputElement | null;
-  const alwaysOpenPopoutEl = document.getElementById('settingsAlwaysOpenPopout') as HTMLInputElement | null;
 
   const historyModeEl = document.getElementById('settingsHistoryStorageMode') as HTMLSelectElement | null;
   const historyFormatEl = document.getElementById('settingsHistoryExportFormat') as HTMLSelectElement | null;
@@ -1280,7 +1255,7 @@ function setupSettingsModal(onSaved: () => void) {
   const historyExportStatusEl = document.getElementById('settingsHistoryExportStatus') as HTMLSpanElement | null;
 
   if (!overlay || !openBtn || !closeBtn || !cancelBtn || !saveBtn || !resetBtn) return;
-  if (!baseUrlEl || !modelSelectEl || !modelCustomEl || !themeEl || !fontEl || !sizeEl || !alwaysOpenPopoutEl || !statusEl) return;
+  if (!baseUrlEl || !modelSelectEl || !modelCustomEl || !themeEl || !fontEl || !sizeEl || !statusEl) return;
   if (!historyModeEl || !historyFormatEl) return;
   if (!historyFolderRow || !chooseHistoryFolderBtn || !clearHistoryFolderBtn || !historyFolderStatusEl) return;
   if (!exportHistoryBtn || !historyExportStatusEl) return;
@@ -1366,7 +1341,6 @@ function setupSettingsModal(onSaved: () => void) {
     themeEl.value = s.theme;
     fontEl.value = s.fontFamily;
     sizeEl.value = String(s.fontSize);
-    alwaysOpenPopoutEl.checked = s.alwaysOpenPopout;
 
     historyModeEl.value = s.historyStorageMode;
     historyFormatEl.value = s.historyExportFormat;
@@ -1559,7 +1533,6 @@ function setupSettingsModal(onSaved: () => void) {
         const theme = themeEl.value as Settings['theme'];
         const fontFamily = fontEl.value as Settings['fontFamily'];
         const fontSize = Number.parseInt(sizeEl.value, 10);
-        const alwaysOpenPopout = alwaysOpenPopoutEl.checked;
 
         const historyStorageMode = historyModeEl.value as Settings['historyStorageMode'];
         const historyExportFormat = historyFormatEl.value as Settings['historyExportFormat'];
@@ -1574,7 +1547,6 @@ function setupSettingsModal(onSaved: () => void) {
           theme,
           fontFamily,
           fontSize,
-          alwaysOpenPopout,
           historyStorageMode,
           historyExportFormat
         });
@@ -1613,7 +1585,6 @@ function setupSettingsModal(onSaved: () => void) {
         themeEl.value = s.theme;
         fontEl.value = s.fontFamily;
         sizeEl.value = String(s.fontSize);
-        alwaysOpenPopoutEl.checked = s.alwaysOpenPopout;
 
         historyModeEl.value = s.historyStorageMode;
         historyFormatEl.value = s.historyExportFormat;
@@ -1820,49 +1791,24 @@ async function main() {
     startWindowBoundsPersistence(mode);
   }
 
-  // Apply theme + typography ASAP.
-  const settings = await getSettings();
-  applyUiSettings(settings);
-
-  // Auto pop-out: open/focus window mode and close the action popup.
-  if (mode === 'popup' && settings.alwaysOpenPopout) {
+  // Always open/focus the pop-out window when the user clicks the extension icon.
+  // MV3 requires a user gesture; the action popup open provides it.
+  if (mode === 'popup') {
     const tabId = await getPopupActiveNormalTabId();
     await openOrFocusPopoutWindowForTab(tabId);
     window.close();
     return;
   }
 
+  // Apply theme + typography ASAP.
+  const settings = await getSettings();
+  applyUiSettings(settings);
+
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
   const modelSelect = $('modelSelect') as HTMLSelectElement;
-  const popoutBtn = document.getElementById('popoutBtn') as HTMLButtonElement | null;
-  const popinBtn = document.getElementById('popinBtn') as HTMLButtonElement | null;
 
   btn.addEventListener('click', () => void onGenerate());
-
-  if (popoutBtn) {
-    popoutBtn.addEventListener('click', () => {
-      void (async () => {
-        await openPopoutWindow();
-        // Close the action popup so the user only manages one window.
-        window.close();
-      })();
-    });
-  }
-
-  if (popinBtn) {
-    popinBtn.addEventListener('click', () => {
-      void (async () => {
-        // MV3 cannot programmatically open the toolbar action popup.
-        // Pop-in closes this pop-out window; user reopens via the extension icon.
-        if (mode === 'window') {
-          setContextBadge('Pop-in: click the extension icon to reopen popup', true);
-          await new Promise((r) => setTimeout(r, 450));
-        }
-        window.close();
-      })();
-    });
-  }
 
   setupSettingsModal(() => {
     // Reload models if base URL / default model changed.

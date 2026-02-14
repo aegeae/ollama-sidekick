@@ -48,7 +48,6 @@ async function load() {
   ($('theme') as HTMLSelectElement).value = fresh.theme;
   ($('fontFamily') as HTMLSelectElement).value = fresh.fontFamily;
   ($('fontSize') as HTMLInputElement).value = String(fresh.fontSize);
-  ($('alwaysOpenPopout') as HTMLInputElement).checked = fresh.alwaysOpenPopout;
 
   ($('historyStorageMode') as HTMLSelectElement).value = fresh.historyStorageMode;
   ($('historyExportFormat') as HTMLSelectElement).value = fresh.historyExportFormat;
@@ -133,8 +132,6 @@ async function save() {
   const fontFamily = ($('fontFamily') as HTMLSelectElement).value as Settings['fontFamily'];
   const fontSize = Number.parseInt(($('fontSize') as HTMLInputElement).value, 10);
 
-  const alwaysOpenPopout = ($('alwaysOpenPopout') as HTMLInputElement).checked;
-
   const historyStorageMode = ($('historyStorageMode') as HTMLSelectElement).value as Settings['historyStorageMode'];
   const historyExportFormat = ($('historyExportFormat') as HTMLSelectElement).value as Settings['historyExportFormat'];
 
@@ -144,7 +141,6 @@ async function save() {
     theme,
     fontFamily,
     fontSize,
-    alwaysOpenPopout,
     historyStorageMode,
     historyExportFormat
   });

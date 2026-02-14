@@ -6,7 +6,6 @@ export type Settings = {
   fontSize: number;
   historyStorageMode: 'local' | 'folder';
   historyExportFormat: 'json' | 'md' | 'jsonl';
-  alwaysOpenPopout: boolean;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -16,8 +15,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontFamily: 'jetbrainsMono',
   fontSize: 13,
   historyStorageMode: 'local',
-  historyExportFormat: 'json',
-  alwaysOpenPopout: true
+  historyExportFormat: 'json'
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -75,7 +73,6 @@ export function coerceSettingsFromStorage(data: Record<string, unknown>): Settin
     data.historyExportFormat === 'json' || data.historyExportFormat === 'md' || data.historyExportFormat === 'jsonl'
       ? data.historyExportFormat
       : null;
-  const alwaysOpenPopout = typeof data.alwaysOpenPopout === 'boolean' ? data.alwaysOpenPopout : null;
 
   let baseUrl = DEFAULT_SETTINGS.baseUrl;
   if (typeof data.baseUrl === 'string' && data.baseUrl.length > 0) {
@@ -93,8 +90,7 @@ export function coerceSettingsFromStorage(data: Record<string, unknown>): Settin
     fontFamily: fontFamily ?? DEFAULT_SETTINGS.fontFamily,
     fontSize: fontSize ?? DEFAULT_SETTINGS.fontSize,
     historyStorageMode: historyStorageMode ?? DEFAULT_SETTINGS.historyStorageMode,
-    historyExportFormat: historyExportFormat ?? DEFAULT_SETTINGS.historyExportFormat,
-    alwaysOpenPopout: alwaysOpenPopout ?? DEFAULT_SETTINGS.alwaysOpenPopout
+    historyExportFormat: historyExportFormat ?? DEFAULT_SETTINGS.historyExportFormat
   };
 }
 
@@ -114,12 +110,6 @@ export function validateSettingsPatch(partial: Partial<Settings>): Partial<Setti
   if (patch.historyExportFormat != null) {
     if (patch.historyExportFormat !== 'json' && patch.historyExportFormat !== 'md' && patch.historyExportFormat !== 'jsonl') {
       throw new Error('Invalid history export format');
-    }
-  }
-
-  if (patch.alwaysOpenPopout != null) {
-    if (typeof patch.alwaysOpenPopout !== 'boolean') {
-      throw new Error('Invalid always-open-popout setting');
     }
   }
 

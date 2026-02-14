@@ -52,17 +52,16 @@ For Chrome Web Store packaging:
 
 - Click the extension icon → pop-out window (default)
 - If model list fails to load, confirm Ollama is reachable at `http://localhost:11434`
-- Configure base URL / default model via **Settings** (in the popup)
+- Configure base URL / default model via **Settings** (in the chat window)
 
-### Popup resize / move
+### Window behavior
 
-- The extension action popup is controlled by the browser UI, so it cannot be freely dragged to a different location.
-- Use **Pop out** to open a movable + resizable chat window (this is the default behavior).
-- **Pop in** closes the pop-out window. You can disable auto pop-out in **Settings** if you prefer the toolbar popup.
+- Clicking the extension icon opens (or focuses) a movable + resizable chat window.
+- If the window is already open, clicking the icon focuses it.
 
 ### Use current tab as context
 
-In the popup:
+In the chat window:
 
 - Context is attached automatically (best-effort) when you send a message.
 
@@ -71,7 +70,7 @@ Context is only extracted on user action (when you send) and is not persisted.
 Notes / limitations:
 
 - Context extraction only works on normal webpages (`http(s)://`). It does not work on restricted pages like `chrome://`, `brave://`, the extensions gallery, etc.
-- In **Pop out** window mode, context targets the active tab in your focused normal browser window. Switch tabs in the browser, then send again to attach the new context.
+- In the chat window, context targets the active tab in your focused normal browser window. Switch tabs in the browser, then send again to attach the new context.
 
 ### Chat history (local)
 
@@ -164,7 +163,7 @@ MIT — see `LICENSE`.
 
 ### HTTP 403 Forbidden
 
-If the popup shows `HTTP 403 Forbidden`, Ollama is usually rejecting the browser `Origin` header (extensions send `Origin: chrome-extension://...`).
+If the UI shows `HTTP 403 Forbidden`, Ollama is usually rejecting the browser `Origin` header (extensions send `Origin: chrome-extension://...`).
 
 To confirm, try:
 
@@ -180,7 +179,7 @@ Then reload the extension and retry.
 ## Manual checklist
 
 - Build: `npm run typecheck` and `npm run build`.
-- Popup: create a new chat, send a message, reload the popup — history remains.
+- Open: create a new chat, send a message, close and reopen the chat window — history remains.
 - Folders: create folder, move chat via folder dropdown, collapse/expand folder.
 - Search: search finds chats by title and message content.
 - Delete: delete a chat; delete a folder moves its chats to **Inbox**.

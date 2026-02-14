@@ -106,19 +106,6 @@
   display: none;
 }
 
-/* Popout vs popin controls */
-#popinBtn {
-  display: none;
-}
-
-:root[data-mode='window'] #popoutBtn {
-  display: none;
-}
-
-:root[data-mode='window'] #popinBtn {
-  display: inline-grid;
-}
-
 :root[data-theme='light'] {
   color-scheme: light;
   --c-bg: #ffffff;

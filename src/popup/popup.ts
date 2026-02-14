@@ -113,6 +113,16 @@ type TabContext = {
   textExcerpt: string;
 };
 
+const CUSTOM_MODEL_VALUE = '__custom__';
+
+type SettingsModelUiSync = {
+  isOpen: () => boolean;
+  syncModel: (model: string) => void;
+  refreshModels: () => Promise<void>;
+};
+
+let settingsModelUiSync: SettingsModelUiSync | null = null;
+
 const state: { messages: ChatMessage[]; generating: boolean } = {
   messages: [],
   generating: false
@@ -366,13 +376,14 @@ function setupSettingsModal(onSaved: () => void) {
   const statusEl = document.getElementById('settingsStatus') as HTMLSpanElement | null;
 
   const baseUrlEl = document.getElementById('settingsBaseUrl') as HTMLInputElement | null;
-  const modelEl = document.getElementById('settingsModel') as HTMLInputElement | null;
+  const modelSelectEl = document.getElementById('settingsModelSelect') as HTMLSelectElement | null;
+  const modelCustomEl = document.getElementById('settingsModelCustom') as HTMLInputElement | null;
   const themeEl = document.getElementById('settingsTheme') as HTMLSelectElement | null;
   const fontEl = document.getElementById('settingsFontFamily') as HTMLSelectElement | null;
   const sizeEl = document.getElementById('settingsFontSize') as HTMLInputElement | null;
 
   if (!overlay || !openBtn || !closeBtn || !cancelBtn || !saveBtn || !resetBtn) return;
-  if (!baseUrlEl || !modelEl || !themeEl || !fontEl || !sizeEl || !statusEl) return;
+  if (!baseUrlEl || !modelSelectEl || !modelCustomEl || !themeEl || !fontEl || !sizeEl || !statusEl) return;
 
   let lastLoaded: Settings | null = null;
 
@@ -380,11 +391,63 @@ function setupSettingsModal(onSaved: () => void) {
     statusEl.textContent = text;
   };
 
+  const setModelUiMode = (mode: 'select' | 'custom') => {
+    const showCustom = mode === 'custom';
+    modelCustomEl.hidden = !showCustom;
+    modelSelectEl.hidden = showCustom;
+  };
+
+  const populateModelUi = async (savedModel: string) => {
+    const models = await fetchModels();
+
+    modelSelectEl.innerHTML = '';
+
+    if (models.length === 0) {
+      // Ollama unreachable or returned no models; still allow a custom model name.
+      setModelUiMode('custom');
+      modelCustomEl.value = savedModel;
+      return;
+    }
+
+    // Model list available.
+    setModelUiMode('select');
+
+    for (const model of models) {
+      const opt = document.createElement('option');
+      opt.value = model;
+      opt.textContent = model;
+      modelSelectEl.appendChild(opt);
+    }
+
+    const customOpt = document.createElement('option');
+    customOpt.value = CUSTOM_MODEL_VALUE;
+    customOpt.textContent = 'Custom…';
+    modelSelectEl.appendChild(customOpt);
+
+    if (models.includes(savedModel)) {
+      modelSelectEl.value = savedModel;
+      modelCustomEl.value = savedModel;
+      modelCustomEl.hidden = true;
+    } else {
+      modelSelectEl.value = CUSTOM_MODEL_VALUE;
+      modelCustomEl.value = savedModel;
+      modelCustomEl.hidden = false;
+    }
+  };
+
+  const getSelectedModelFromUi = (): string => {
+    if (!modelSelectEl.hidden) {
+      if (modelSelectEl.value === CUSTOM_MODEL_VALUE) return modelCustomEl.value.trim();
+      return modelSelectEl.value.trim();
+    }
+    return modelCustomEl.value.trim();
+  };
+
   const populate = async () => {
     const s = await getSettings();
     lastLoaded = s;
     baseUrlEl.value = s.baseUrl;
-    modelEl.value = s.model;
+    await populateModelUi(s.model);
     themeEl.value = s.theme;
     fontEl.value = s.fontFamily;
     sizeEl.value = String(s.fontSize);
@@ -406,6 +469,37 @@ function setupSettingsModal(onSaved: () => void) {
     openBtn.focus();
   };
 
+  const syncModelToUi = (model: string) => {
+    // If modal isn't open, don't do any work.
+    if (overlay.hidden) return;
+
+    if (modelSelectEl.hidden) {
+      modelCustomEl.value = model;
+      return;
+    }
+
+    // When select is visible, try to set it to the model if present, otherwise fall back to Custom.
+    const hasModelOption = Array.from(modelSelectEl.options).some((o) => o.value === model);
+    if (hasModelOption) {
+      modelSelectEl.value = model;
+      modelCustomEl.value = model;
+      modelCustomEl.hidden = true;
+    } else {
+      modelSelectEl.value = CUSTOM_MODEL_VALUE;
+      modelCustomEl.value = model;
+      modelCustomEl.hidden = false;
+    }
+  };
+
+  settingsModelUiSync = {
+    isOpen: () => !overlay.hidden,
+    syncModel: syncModelToUi,
+    refreshModels: async () => {
+      const s = await getSettings();
+      await populateModelUi(s.model);
+    }
+  };
+
   overlay.addEventListener('click', (ev) => {
     if (ev.target === overlay) close();
   });
@@ -413,6 +507,17 @@ function setupSettingsModal(onSaved: () => void) {
   document.addEventListener('keydown', (ev) => {
     if (overlay.hidden) return;
     if (ev.key === 'Escape') close();
+  });
+
+  modelSelectEl.addEventListener('change', () => {
+    if (modelSelectEl.value === CUSTOM_MODEL_VALUE) {
+      modelCustomEl.hidden = false;
+      modelCustomEl.focus();
+      modelCustomEl.select();
+    } else {
+      modelCustomEl.hidden = true;
+      modelCustomEl.value = modelSelectEl.value;
+    }
   });
 
   // Ensure hidden overlays are not accidentally left visible due to CSS.
@@ -441,7 +546,7 @@ function setupSettingsModal(onSaved: () => void) {
     Promise.resolve()
       .then(async () => {
         const baseUrl = baseUrlEl.value.trim();
-        const model = modelEl.value.trim();
+        const model = getSelectedModelFromUi();
         const theme = themeEl.value as Settings['theme'];
         const fontFamily = fontEl.value as Settings['fontFamily'];
         const fontSize = Number.parseInt(sizeEl.value, 10);
@@ -455,6 +560,8 @@ function setupSettingsModal(onSaved: () => void) {
         lastLoaded = s;
         applyUiSettings(s);
         onSaved();
+        // Ensure the UI reflects the stored default model.
+        syncModelToUi(s.model);
         // Close immediately after saving to keep the popup uncluttered.
         close();
       })
@@ -479,7 +586,7 @@ function setupSettingsModal(onSaved: () => void) {
         onSaved();
 
         baseUrlEl.value = s.baseUrl;
-        modelEl.value = s.model;
+        await populateModelUi(s.model);
         themeEl.value = s.theme;
         fontEl.value = s.fontFamily;
         sizeEl.value = String(s.fontSize);
@@ -537,40 +644,44 @@ async function loadModels() {
 
   const settings = await getSettings();
 
-  try {
-    const resp = await sendMessage({ type: 'OLLAMA_LIST_MODELS' });
-    if (!resp.ok) throw new Error(formatError(resp));
-
-    if (resp.type !== 'OLLAMA_LIST_MODELS_RESULT') {
-      throw new Error('Unexpected response while listing models');
-    }
-
-    const models = resp.models;
-    if (models.length === 0) {
-      // Ollama reachable but no models returned; still allow generation if user knows the model name.
-      const opt = document.createElement('option');
-      opt.value = settings.model;
-      opt.textContent = settings.model;
-      modelSelect.appendChild(opt);
-      return;
-    }
-
-    for (const model of models) {
-      const opt = document.createElement('option');
-      opt.value = model;
-      opt.textContent = model;
-      modelSelect.appendChild(opt);
-    }
-
-    // Auto-select saved default model if it exists in the list.
-    const defaultIndex = models.findIndex((m) => m === settings.model);
-    if (defaultIndex >= 0) modelSelect.selectedIndex = defaultIndex;
-  } catch {
+  const models = await fetchModels();
+  if (models.length === 0) {
     // If listing fails (e.g. Ollama down), still provide a reasonable default.
     const opt = document.createElement('option');
     opt.value = settings.model;
     opt.textContent = settings.model;
     modelSelect.appendChild(opt);
+    modelSelect.value = settings.model;
+    return;
+  }
+
+  for (const model of models) {
+    const opt = document.createElement('option');
+    opt.value = model;
+    opt.textContent = model;
+    modelSelect.appendChild(opt);
+  }
+
+  // Keep the stored model selectable even if Ollama didn't report it.
+  const hasStoredModel = models.includes(settings.model);
+  if (!hasStoredModel) {
+    const opt = document.createElement('option');
+    opt.value = settings.model;
+    opt.textContent = settings.model;
+    modelSelect.appendChild(opt);
+  }
+
+  modelSelect.value = settings.model;
+}
+
+async function fetchModels(): Promise<string[]> {
+  try {
+    const resp = await sendMessage({ type: 'OLLAMA_LIST_MODELS' });
+    if (!resp.ok) return [];
+    if (resp.type !== 'OLLAMA_LIST_MODELS_RESULT') return [];
+    return Array.isArray(resp.models) ? resp.models : [];
+  } catch {
+    return [];
   }
 }
 
@@ -645,6 +756,7 @@ async function main() {
 
   const btn = $('generateBtn') as HTMLButtonElement;
   const promptEl = $('prompt') as HTMLTextAreaElement;
+  const modelSelect = $('modelSelect') as HTMLSelectElement;
   const useContextToggle = document.getElementById('useContextToggle') as HTMLInputElement | null;
   const popoutBtn = document.getElementById('popoutBtn') as HTMLButtonElement | null;
 
@@ -657,6 +769,12 @@ async function main() {
   setupSettingsModal(() => {
     // Reload models if base URL / default model changed.
     void loadModels();
+  });
+
+  modelSelect.addEventListener('change', () => {
+    const model = modelSelect.value;
+    void setSettings({ model });
+    settingsModelUiSync?.syncModel(model);
   });
 
   promptEl.addEventListener('input', () => autoGrowTextarea(promptEl));
